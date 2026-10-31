@@ -16,6 +16,8 @@
     --series-6: #008300;
     --series-7: #6250d6;
     --highlight: rgba(42, 120, 214, 0.14);
+    --band: rgba(82, 81, 78, 0.16);
+    --band-edge: rgba(82, 81, 78, 0.55);
     --violation: #d03b3b;
     --ok: #006300;
     /* sequential blue for |w|/c in [0, 1]: lightest = near zero, recedes into the surface */
@@ -45,6 +47,8 @@
         --series-6: #008300;
         --series-7: #9085e9;
         --highlight: rgba(57, 135, 229, 0.20);
+        --band: rgba(195, 194, 183, 0.16);
+        --band-edge: rgba(195, 194, 183, 0.5);
         --violation: #e66767;
         --ok: #0ca30c;
         /* reversed on dark: near zero recedes into the dark surface */
@@ -447,5 +451,26 @@ footer a {
     width: 14px;
     height: 3px;
     border-radius: 1px;
+}
+
+.band-fill {
+    fill: var(--band);
+}
+
+.band-empty {
+    fill: var(--violation);
+    fill-opacity: 0.35;
+}
+
+.band-edge {
+    fill: none;
+    stroke: var(--band-edge);
+    stroke-width: 1;
+}
+
+.legend .key.box {
+    width: 14px;
+    height: 10px;
+    border-radius: 2px;
 }
 

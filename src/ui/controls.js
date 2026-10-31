@@ -2,6 +2,11 @@
 
 import { SIGNALS } from '../core/signals.js';
 import { METHODS, METHOD_KEYS } from './methods.js';
+import { BANDS, BAND_KEYS } from './bands.js';
+
+const K_MULT_MIN = 1; // K slider range, multiples of the fast K_min
+const K_MULT_MAX = 4;
+const K_MULT_STEP = 0.05;
 
 const DEBOUNCE = 200; // ms for typed numeric input
 const MAX_N = 20000; // simulated sample size cap
@@ -167,6 +172,21 @@ export function createControls(container, state, onChange) {
         overlays.append(label);
     }
 
+    const band = el('select', {}, BAND_KEYS.map(key => el('option', { value: key, text: BANDS[key].label })));
+    band.value = state.band;
+    band.addEventListener('change', () => onChange({ band: band.value }));
+    const bandHint = el('span', { class: 'field-hint' });
+    const thetaInput = numberInput('theta', { min: 1.05, step: 0.05 });
+    const kMult = el('input', {
+        type: 'range', min: String(K_MULT_MIN), max: String(K_MULT_MAX), step: String(K_MULT_STEP),
+        value: String(state.kMultiple),
+    });
+    const kLabel = el('span', { class: 'field-hint' });
+    kMult.addEventListener('input', () => later({ kMultiple: Number(kMult.value) }));
+    const kBox = el('label', { class: 'field' }, [
+        el('span', { class: 'field-label', text: 'K, in multiples of K_min' }), kMult, kLabel,
+    ]);
+
     container.append(
         el('h2', { text: 'Data' }),
         field('dataset', source),
@@ -182,10 +202,14 @@ export function createControls(container, state, onChange) {
         fixBox,
         el('span', { class: 'field-label', text: 'also show' }),
         overlays,
+        el('h2', { text: 'Confidence band' }),
+        el('label', { class: 'field' }, [el('span', { class: 'field-label', text: 'assume f is' }), band, bandHint]),
+        kBox,
+        field('θ', thetaInput, 'window grid ratio for the fast bounds (O(n log n))'),
     );
 
     let lastColumns = null;
-    function sync(st, { columns }) {
+    function sync(st, { columns, equallySpaced = true, kMin = null }) {
         const isUser = st.source === USER;
         simBox.hidden = isUser;
         userBox.hidden = !isUser;
@@ -202,6 +226,17 @@ export function createControls(container, state, onChange) {
         fixBox.hidden = st.method !== 'combined';
         for (const [key, { label }] of overlayChecks)
             label.hidden = key === st.method;
+        for (const opt of band.options) {
+            const needs = BANDS[opt.value].needsEqual;
+            opt.disabled = needs && !equallySpaced;
+            opt.title = opt.disabled ? 'needs equally spaced x' : '';
+        }
+        bandHint.textContent = BANDS[st.band].needsEqual && !equallySpaced
+            ? 'needs equally spaced x (uses index symmetry); choose another band'
+            : BANDS[st.band].note;
+        kBox.hidden = st.band !== 'smooth';
+        kLabel.textContent = kMin === null ? ''
+            : `K = ${(st.kMultiple * kMin).toPrecision(4)} (${st.kMultiple}× K_min = ${kMin.toPrecision(4)}, x units)`;
     }
 
     return { sync };

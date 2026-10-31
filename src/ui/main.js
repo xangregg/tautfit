@@ -20,6 +20,11 @@ import { cellEdges } from './layout.js';
 import { onThemeChange } from './theme.js';
 import { regularizeInWorker } from './lp.js';
 import { METHODS } from './methods.js';
+import { BANDS } from './bands.js';
+import {
+    monotoneBounds, piecewiseMonotoneBounds, convexBounds, piecewiseConvexBounds, curvatureSegments,
+    smoothnessBounds, smoothnessKMin, crossings,
+} from '../core/bounds.js';
 
 const fmt = d3.format('.4~g');
 const fmtInt = d3.format(',');
@@ -41,6 +46,9 @@ const state = {
     method: 'taut', // key of METHODS
     overlays: [], // keys of METHODS drawn in addition to the primary fit
     fixExtremes: false, // combined: pin extremes to the taut string's values
+    band: 'none', // key of BANDS
+    theta: 1.5, // window grid ratio for the fast bounds
+    kMultiple: 2, // smoothness band: K = kMultiple × K_min (fast)
 };
 
 let tableCache = { text: null, table: null };
@@ -68,6 +76,7 @@ function deriveBase(st) {
     let f = null;
     let columns = [];
     let dataKey;
+    let equallySpaced;
     const notes = [];
     if (st.source === 'user') {
         const table = getTable(st.userText);
@@ -84,6 +93,7 @@ function deriveBase(st) {
         x = d.x;
         y = d.y;
         dataKey = `user|${hashText(st.userText)}|${xCol}|${yCol}`;
+        equallySpaced = d.equallySpaced;
         if (d.dropped)
             notes.push(`${fmtInt(d.dropped)} incomplete row(s) dropped`);
         if (d.ties)
@@ -96,6 +106,7 @@ function deriveBase(st) {
         y = sim.y;
         f = sim.f;
         dataKey = `${st.source}|${st.n}|${st.sigma}|${st.seed}`;
+        equallySpaced = true;
         notes.push(`tᵢ = i/n; y = f(t) + ${fmt(st.sigma)}·Z, seed ${st.seed}`);
     }
     const n = y.length;
@@ -110,9 +121,13 @@ function deriveBase(st) {
     const taut = tautStringRegression(y, { sigma: sigmaUsed, tau: st.tau, intervals: family });
     const tautExt = localExtremes(taut.f);
     const regionKey = `${dataKey}|${sigmaUsed}|${st.tau}|${st.lambda}`;
+    const h = (x[n - 1] - x[0]) / (n - 1); // spacing, meaningful when equallySpaced
+    // Bands are meant for τ = 3-style thresholds; they use c with σ (σ̂ unless fixed), like Aₙ.
+    // K_min costs O(n·|grid|²); only the smoothness band needs it.
+    const kMin = equallySpaced && st.band === 'smooth' ? smoothnessKMin(y, c, h, { theta: st.theta }) : null;
     return {
         columns, notes, x, y, f, n, sigmaHat, sigmaUsed, c, family, levels, taut, tautExt, regionKey,
-        edges: cellEdges(x),
+        equallySpaced, h, kMin, edges: cellEdges(x),
     };
 }
 
@@ -130,6 +145,65 @@ function analyze(fit, base) {
     fit.w = rows.map(r => r.w);
     fit.ratios = rows.map(r => r.ratios);
     return fit;
+}
+
+/**
+ * The selected confidence band, {pending: true} while an LP it depends on is solving, or null.
+ */
+function computeBand(base, st, getFit) {
+    const spec = BANDS[st.band];
+    if (st.band === 'none' || (spec.needsEqual && !base.equallySpaced))
+        return null;
+    const { y, c } = base;
+    const theta = st.theta;
+    let b;
+    let extra = '';
+    if (st.band === 'monoUp' || st.band === 'monoDown') {
+        b = monotoneBounds(y, c, { direction: st.band === 'monoUp' ? 1 : -1, theta });
+    }
+    else if (st.band === 'pwMono') {
+        const extremes = base.tautExt.extremes.map(e => ({ type: e.type, position: Math.floor((e.start + e.end) / 2) }));
+        b = piecewiseMonotoneBounds(y, c, extremes, { theta });
+        extra = extremes.length ? `${extremes.length} extreme position(s) from the taut string`
+            : 'taut string has no extremes: monotone in either direction';
+    }
+    else if (st.band === 'convex' || st.band === 'concave') {
+        b = convexBounds(y, c, { concave: st.band === 'concave', theta });
+    }
+    else if (st.band === 'pwConvex') {
+        const fit = getFit('minTV1');
+        if (!fit)
+            return { pending: true };
+        if (fit.error)
+            return null;
+        const segments = curvatureSegments(base.x, fit.g);
+        b = piecewiseConvexBounds(y, c, segments, { theta });
+        extra = segments.map(sg => sg.type).join(' → ');
+    }
+    else {
+        const K = st.kMultiple * base.kMin;
+        b = smoothnessBounds(y, c, K, base.h, { theta });
+        extra = `K = ${fmt(K)} (${st.kMultiple}× K_min)`;
+    }
+    const empty = crossings(b);
+    const inside = base.f ? base.f.every((v, i) => b.lb[i] <= v && v <= b.ub[i]) : null;
+    return { ...b, label: `band: ${spec.name}`, empty, inside, extra };
+}
+
+function bandRows(base, band, st) {
+    const rows = [];
+    const add = (label, value, title) => rows.push({ label, value, title });
+    add('band', BANDS[st.band].name, band.extra || undefined);
+    add('θ', fmt(st.theta), 'fast bounds on a geometric window grid');
+    if (st.band === 'smooth')
+        add('K_min (fast)', fmt(base.kMin), 'smallest K with a non-empty band; a lower bound on ‖g″‖∞ in x units');
+    add('empty at', `${fmtInt(band.empty)} of ${fmtInt(base.n)} points`,
+        band.empty ? 'the assumption is inconsistent with the data there' : 'the assumption is consistent with the data');
+    if (band.inside !== null) {
+        add('true f inside', band.inside ? 'yes' : 'no',
+            'honest bands cover f in ≥ 95% of runs (measured 95–96% at n = 500)');
+    }
+    return rows;
 }
 
 function readoutRows(base, fit, st) {
@@ -198,7 +272,7 @@ function verdictText(base, fit) {
     return `: the smallest ${fit.lp.objectiveLabel} of any function in Aₙ is ${fmt(fit.lp.objective)}; ${extremes}.`;
 }
 
-function renderReadouts(container, base, fit, st) {
+function renderReadouts(container, base, fit, st, band) {
     const sel = d3.select(container);
     sel.selectAll('*').remove();
     sel.append('h2').text('Readouts');
@@ -211,6 +285,16 @@ function renderReadouts(container, base, fit, st) {
         dl.append('dd').text(r.value);
         if (r.title)
             dl.append('dd').attr('class', 'dd-note').text(r.title);
+    }
+    if (band && !band.pending) {
+        sel.append('h2').text('Band');
+        const bdl = sel.append('dl');
+        for (const r of bandRows(base, band, st)) {
+            bdl.append('dt').text(r.label);
+            bdl.append('dd').text(r.value);
+            if (r.title)
+                bdl.append('dd').attr('class', 'dd-note').text(r.title);
+        }
     }
     sel.append('ul').attr('class', 'notes').selectAll('li').data(base.notes).join('li').text(d => d);
 }
@@ -279,29 +363,32 @@ function startup() {
             status.classed('error', true).text(`${METHODS[state.method].name}: ${primary.error}`);
             return;
         }
-        const pending = !primary;
+        const band = computeBand(base, state, getFit);
+        const bandPending = Boolean(band?.pending);
+        const pending = !primary || bandPending;
         charts.classList.toggle('pending', pending);
         readouts.classList.toggle('pending', pending);
-        status.classed('error', false).text(pending ? `Solving ${METHODS[state.method].name}…` : '');
+        status.classed('error', false).text(!primary ? `Solving ${METHODS[state.method].name}…`
+            : bandPending ? 'Solving min TV(g′) for the convexity intervals…' : '');
         if (pending && shown)
             return; // keep the previous frame, dimmed, until the solve returns
         const drawPrimary = primary ?? getFit('taut');
-        shown = { primary: drawPrimary, overlays };
+        shown = { primary: drawPrimary, overlays, band: bandPending ? null : band };
         draw();
-        renderReadouts(readouts, base, drawPrimary, state);
+        renderReadouts(readouts, base, drawPrimary, state, shown.band);
     }
 
     function draw() {
         if (!shown)
             return;
-        const { primary, overlays } = shown;
+        const { primary, overlays, band } = shown;
         const fits = [...overlays, primary].map(fit => ({
             key: fit.key, label: METHODS[fit.key].name, g: fit.g, step: METHODS[fit.key].step,
             runs: localExtremes(fit.g, METHODS[fit.key].extremesTol).runs,
             colorVar: METHODS[fit.key].color, primary: fit === primary,
         }));
         chart.render({ x: base.x, y: base.y, f: state.showTruth ? base.f : null, fits,
-            extremes: primary.ext.extremes, edges: base.edges });
+            extremes: primary.ext.extremes, edges: base.edges, band });
         residual.render({ x: base.x, edges: base.edges, levels: base.levels, w: primary.w, ratios: primary.ratios,
             limit: primary.limit });
     }
@@ -314,7 +401,7 @@ function startup() {
             base = { error: String(err.message ?? err), columns: [] };
             console.error(err);
         }
-        controls.sync(state, { columns: base.columns });
+        controls.sync(state, { columns: base.columns, equallySpaced: base.equallySpaced ?? true, kMin: base.kMin ?? null });
         charts.classList.toggle('empty', Boolean(base.error));
         if (base.error) {
             status.classed('error', false).text(base.error);

@@ -25,6 +25,7 @@ const fmt = d3.format('.4~g');
  * @property {ChartFit[]} fits      fits to draw, primary last
  * @property {{type: 'max'|'min', start: number, end: number}[]} extremes  local extremes of the primary
  * @property {Float64Array} edges   cell edges (layout.cellEdges)
+ * @property {{lb: Float64Array, ub: Float64Array, label: string}|null} band  pointwise confidence band
  */
 
 /**
@@ -48,9 +49,12 @@ export function createMainChart(container) {
     const plot = d3.select(container).append('div').attr('class', 'plot').style('height', `${HEIGHT}px`);
     const canvas = plot.append('canvas').node();
     const svg = plot.append('svg').attr('height', HEIGHT);
+    const clipId = `plot-clip-${Math.random().toString(36).slice(2)}`;
+    const clipRect = svg.append('clipPath').attr('id', clipId).append('rect');
     const gGrid = svg.append('g').attr('class', 'grid');
+    const gBand = svg.append('g').attr('class', 'band').attr('clip-path', `url(#${clipId})`);
     const gHighlight = svg.append('rect').attr('class', 'interval-highlight').attr('visibility', 'hidden');
-    const gLines = svg.append('g');
+    const gLines = svg.append('g').attr('clip-path', `url(#${clipId})`);
     const gMarks = svg.append('g').attr('class', 'extreme-marks');
     const gAxisX = svg.append('g').attr('class', 'axis');
     const gAxisY = svg.append('g').attr('class', 'axis');
@@ -84,6 +88,8 @@ export function createMainChart(container) {
         sy = d3.scaleLinear().domain([lo, hi]).nice().range([HEIGHT - MARGIN.bottom, MARGIN.top]);
 
         svg.attr('width', width);
+        clipRect.attr('x', MARGIN.left).attr('y', MARGIN.top)
+            .attr('width', width - MARGIN.left - MARGIN.right).attr('height', HEIGHT - MARGIN.top - MARGIN.bottom);
         overlay.attr('x', MARGIN.left).attr('width', width - MARGIN.left - MARGIN.right);
         gAxisX.attr('transform', `translate(0,${HEIGHT - MARGIN.bottom})`)
             .call(d3.axisBottom(sx).ticks(width / 90).tickSizeOuter(0));
@@ -106,6 +112,27 @@ export function createMainChart(container) {
         ctx.globalAlpha = 1;
 
         const line = v => d3.line().x((_, i) => sx(x[i])).y((_, i) => sy(v[i]))(v);
+
+        // Band: infinite bounds are drawn to just past the plot edge (the tooltip shows ±∞). Where
+        // lb > ub the band is empty: the assumption is inconsistent with the data there.
+        gBand.selectAll('*').remove();
+        if (m.band) {
+            const [y0, y1] = sy.range(); // bottom, top in px
+            const clampPx = v => Math.max(y1 - 10, Math.min(y0 + 10, sy(v)));
+            const px = v => (v === Infinity ? y1 - 10 : v === -Infinity ? y0 + 10 : clampPx(v));
+            const { lb, ub } = m.band;
+            const ok = i => lb[i] <= ub[i];
+            gBand.append('path').attr('class', 'band-fill')
+                .attr('d', d3.area().defined((_, i) => ok(i)).x((_, i) => sx(x[i]))
+                    .y0((_, i) => px(lb[i])).y1((_, i) => px(ub[i]))(lb));
+            gBand.append('path').attr('class', 'band-empty')
+                .attr('d', d3.area().defined((_, i) => !ok(i)).x((_, i) => sx(x[i]))
+                    .y0((_, i) => px(ub[i])).y1((_, i) => px(lb[i]))(lb));
+            for (const v of [lb, ub]) {
+                gBand.append('path').attr('class', 'band-edge')
+                    .attr('d', d3.line().defined(i => Number.isFinite(v[i])).x(i => sx(x[i])).y(i => px(v[i]))(d3.range(n)));
+            }
+        }
         // A piecewise-constant fit is drawn over each observation's cell, so plateaus show their extent.
         const steps = fit => {
             let d = '';
@@ -152,6 +179,8 @@ export function createMainChart(container) {
             .attr('fill', colors.ink);
 
         const items = [{ label: 'data', color: colors.muted, dot: true }, ...series];
+        if (m.band)
+            items.push({ label: m.band.label, color: colors['band'], box: true });
         if (shown.length)
             items.push({ label: 'local max / min plateau', color: colors.ink, glyph: '▲▼' });
         else if (m.extremes.length)
@@ -163,6 +192,7 @@ export function createMainChart(container) {
             return s;
         })
             .call(s => s.select('.key')
+                .classed('box', d => Boolean(d.box))
                 .classed('dot', d => Boolean(d.dot))
                 .classed('glyph', d => Boolean(d.glyph))
                 .text(d => d.glyph ?? '')
@@ -198,6 +228,11 @@ export function createMainChart(container) {
             rows.push([fmt(model.f[i]), 'true f', colors['series-2']]);
         for (const fit of [...model.fits].reverse())
             rows.push([fmt(fit.g[i]), fit.label, cssColor(fit.colorVar)]);
+        if (model.band) {
+            const b = model.band;
+            const show = v => (v === Infinity ? '+∞' : v === -Infinity ? '−∞' : fmt(v));
+            rows.push([`[${show(b.lb[i])}, ${show(b.ub[i])}]`, b.lb[i] > b.ub[i] ? 'band (empty here)' : 'band']);
+        }
         const ext = model.extremes.find(e => e.start <= i && i <= e.end);
         const note = ext
             ? `In a local ${ext.type === 'max' ? 'maximum' : 'minimum'} plateau: #${ext.start + 1}–${ext.end + 1}, `

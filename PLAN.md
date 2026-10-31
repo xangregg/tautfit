@@ -169,7 +169,9 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
 
 ### 1.10 Unequal spacing and ties
 
-- Aₙ, σ̂, taut string, minTV(0) and the shape bounds use only the ordering: fine for any spacing.
+- Aₙ, σ̂, taut string, minTV(0) and the *monotone* shape bounds use only the ordering: fine for any spacing.
+  *(Corrected in M4: the convex/concave bounds also need equal spacing — the upper bound uses gᵢ ≤ (gᵢ₋ⱼ + gᵢ₊ⱼ)/2
+  and the lower bound index-linear interpolation; Known issue 12. The UI disables them for unequal spacing.)*
 - Derivative-based methods use divided differences on rescaled x.
 - Ties in x: stable sort, keep rows. For derivative-based LPs add gᵢ = gᵢ₊₁ for tied x and skip
   zero-width differences. For display, plot the fit's mean at each tied x. *(M3: all LP fits use one variable per
@@ -205,10 +207,15 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
 10. Eq. 44 defines TV(g⁽ᵏ⁾) = Σ|Δ⁽ᵏ⁺¹⁾g(i/n)| with Δ⁽¹⁾ = n(·), which is n × the total variation of the
     k-th derivative (a Riemann sum for n∫|g⁽ᵏ⁺¹⁾| rather than ∫|g⁽ᵏ⁺¹⁾|). The minimizer is unchanged; we report
     the true TV. Eq. 46 (sup norm) is scaled correctly.
-11. K_min for sin(4πt), σ = 0.2, n = 500 (paper: 117.7 for its draw). Ours over 40 seeds with the dyadic family:
+11. K_min for sin(4πt) (paper §5.3: 117.7). Note §5.3 actually says σ = 1 (not 0.2 as §5 of this plan lists for
+    Fig. 6), gives no n, and quotes the minimum as 117.7, 117.2 and 115.0 in different sentences; its fast-bound
+    K_min is 104.5. With σ = 0.2, n = 500: Ours over 40 seeds with the dyadic family:
     median 104.2, range 97.5–109.7. Denser families raise it (10 seeds: dyadic 103.8, λ = 1.1 107.0, all
     125 250 intervals 110.3) but stay below 117.7; the paper's family/σ̂ in Kovac's software may differ. All
-    below 16π² ≈ 157.9 as the theory requires.
+    below 16π² ≈ 157.9 as the theory requires. Fast-bound K_min (M4, θ = 1.5) ≈ 72–96, below the LP value in
+    20/20 seeds, matching the paper's pattern (104.5 fast vs 115.0).
+12. Convex/concave bounds (eqs. 66–71) assume equally spaced design points, as the paper says in §5.2.2; this
+    plan's §1.10 originally listed them among the order-only methods.
 
 ---
 
@@ -336,12 +343,24 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         Aₙ were painted as violations).
 
 ### M4 — Fast bounds
-- [ ] bounds.js: monotone, piecewise monotone, convex (derived lower bound), piecewise convex, smoothness-K, K_min
-- [ ] Tests: fast bounds are no tighter than the O(n²) references (lb_fast ≤ lb_full, ub_fast ≥ ub_full); lb ≤ ub on
+- [x] bounds.js: monotone, piecewise monotone, convex (derived lower bound), piecewise convex, smoothness-K, K_min
+      → K_min in closed form (max over i, k₁, k₂ of (m₁ − m₂ − c₁ − c₂)/(a₁ + a₂)) instead of bisection; tested to
+        be exactly where the band stops being empty. `curvatureSegments` gets convex/concave intervals from the
+        min TV(g′) spline. `crossings` counts points where a band is empty (assumption rejected).
+- [x] Tests: fast bounds are no tighter than the O(n²) references (lb_fast ≤ lb_full, ub_fast ≥ ub_full); lb ≤ ub on
       data from a shape-consistent f; monotone bounds are monotone; **coverage simulation**: for exp(5t) (monotone &
       convex), sin(4πt) (smoothness, K = 16π²), n = 500, 1000 seeds, f lies inside the band everywhere in ≥ 95% of runs —
       report the observed rate
-- [ ] UI: band selector, θ, K slider with K_min readout
+      → observed: monotone 96.1%, convex 95.8%, smoothness 95.4% (s.e. ≈ 0.7%), consistent with Known issue 6
+        (honesty rests on Aₙ over all intervals, ≥ 0.95 at τ = 3, n ≥ 500). Not asserted, measured once: piecewise
+        monotone with taut-string extreme positions 96.5%; piecewise convex with min TV(g′) intervals 98.5% (200 seeds).
+        Also: full monotone bounds equal a direct evaluation of eqs. 59–60; inconsistent shapes give empty bands.
+- [x] UI: band selector, θ, K slider with K_min readout
+      → band drawn as a ribbon (empty spots in the violation color, infinite bounds to the plot edge, exact values
+        in the tooltip); readouts: empty count and, for simulated data, whether the true f is inside; convex and
+        smoothness bands disabled for unequal spacing. Piecewise convex waits for the min TV(g′) LP.
+      → not done: the "any position within the taut-string plateau" variant of §5.2.3 (Fig. 4 upper panel) and
+        dragging extreme positions (stretch goal).
 
 ### M5 — Calibration and exact bounds
 - [ ] Monte Carlo τₙ(α) in a worker with caching; UI switch "τ = 3" vs "calibrated α"

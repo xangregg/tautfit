@@ -4,7 +4,7 @@
 const NAMES = [
     'surface', 'ink', 'ink-2', 'muted', 'grid', 'axis',
     'series-1', 'series-2', 'highlight', 'violation',
-    'seq-0', 'seq-1', 'seq-2', 'seq-3', 'seq-4',
+    'seq-0', 'seq-1', 'seq-2', 'seq-3', 'seq-4', 'band',
 ];
 
 /**
