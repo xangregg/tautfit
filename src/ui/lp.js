@@ -11,10 +11,14 @@ function getWorker() {
         return worker;
     worker = new Worker(WORKER_URL, { type: 'module' });
     worker.addEventListener('message', event => {
-        const { id, error, ...result } = event.data;
+        const { id, error, progress, ...result } = event.data;
         const entry = pending.get(id);
         if (!entry)
             return;
+        if (progress !== undefined) {
+            entry.onProgress?.(progress);
+            return;
+        }
         pending.delete(id);
         if (error)
             entry.reject(new Error(error));
@@ -32,13 +36,35 @@ function getWorker() {
     return worker;
 }
 
-function request(message) {
+function request(message, onProgress) {
     const w = getWorker();
     const id = nextId++;
     return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
+        pending.set(id, { resolve, reject, onProgress });
         w.postMessage({ id, ...message });
     });
+}
+
+/**
+ * Exact LP bounds (src/core/exact.js) in the worker.
+ *
+ * @param {object} spec  exactBounds spec without the HiGHS instance
+ * @param {function(number): void} [onProgress]  completed fraction
+ * @returns {Promise<{status: string, lb: Float64Array|null, ub: Float64Array|null, solves: number, ms: number}>}
+ */
+export function exactBoundsInWorker(spec, onProgress) {
+    return request({ task: 'exactBounds', spec }, onProgress);
+}
+
+/**
+ * Monte Carlo sample of the multiscale statistic (src/core/calibrate.js) in the worker.
+ *
+ * @param {{n: number, lambda: number, family: 'chosen'|'all', B: number, seed: number, plugSigma: boolean}} spec
+ * @param {function(number): void} [onProgress]
+ * @returns {Promise<{sorted: Float64Array}>}
+ */
+export function calibrateInWorker(spec, onProgress) {
+    return request({ task: 'calibrate', spec }, onProgress);
 }
 
 /**

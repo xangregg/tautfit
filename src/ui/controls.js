@@ -7,6 +7,8 @@ import { BANDS, BAND_KEYS } from './bands.js';
 const K_MULT_MIN = 1; // K slider range, multiples of the fast K_min
 const K_MULT_MAX = 4;
 const K_MULT_STEP = 0.05;
+const EXACT_MAX_N = 300; // matches main.js
+const CALIBRATE_ALL_MAX_N = 2000; // matches main.js
 
 const DEBOUNCE = 200; // ms for typed numeric input
 const MAX_N = 20000; // simulated sample size cap
@@ -132,6 +134,25 @@ export function createControls(container, state, onChange) {
 
     // --- confidence region
     const tauInput = numberInput('tau', { min: 0.1, step: 0.1 });
+    const tauFixedRadio = el('input', { type: 'radio', name: 'tau-mode', checked: state.tauMode === 'fixed' });
+    const tauCalRadio = el('input', { type: 'radio', name: 'tau-mode', checked: state.tauMode === 'calibrated' });
+    tauFixedRadio.addEventListener('change', () => onChange({ tauMode: 'fixed' }));
+    tauCalRadio.addEventListener('change', () => onChange({ tauMode: 'calibrated' }));
+    const alphaInput = numberInput('alpha', { min: 0.5, max: 0.999, step: 0.01 });
+    const calFamily = el('select', {}, [
+        el('option', { value: 'chosen', text: 'the λ family (as Aₙ uses)' }),
+        el('option', { value: 'all', text: 'all intervals (fast bands rely on these)' }),
+    ]);
+    calFamily.value = state.calibFamily;
+    calFamily.addEventListener('change', () => onChange({ calibFamily: calFamily.value }));
+    const plug = el('input', { type: 'checkbox', checked: state.plugSigma });
+    plug.addEventListener('change', () => onChange({ plugSigma: plug.checked }));
+    const calBox = el('div', { class: 'group' }, [
+        field('α (coverage)', alphaInput),
+        field('calibrate for', calFamily),
+        el('label', { class: 'check' }, [plug, ' include estimating σ (σ̂ of the noise)']),
+    ]);
+    const tauValue = el('span', { class: 'field-hint' });
     const lambdaInput = numberInput('lambda', { min: 1.1, step: 0.1 });
     const sigmaFixed = el('input', { type: 'checkbox', checked: state.sigmaFixed !== null });
     const sigmaFixedValue = el('input', {
@@ -183,6 +204,12 @@ export function createControls(container, state, onChange) {
     });
     const kLabel = el('span', { class: 'field-hint' });
     kMult.addEventListener('input', () => later({ kMultiple: Number(kMult.value) }));
+    const exactCheck = el('input', { type: 'checkbox', checked: state.exact });
+    exactCheck.addEventListener('change', () => onChange({ exact: exactCheck.checked }));
+    const exactHint = el('span', { class: 'field-hint' });
+    const exactBox = el('div', {}, [
+        el('label', { class: 'check' }, [exactCheck, ' also exact LP bounds (dashed)']), exactHint,
+    ]);
     const kBox = el('label', { class: 'field' }, [
         el('span', { class: 'field-label', text: 'K, in multiples of K_min' }), kMult, kLabel,
     ]);
@@ -193,7 +220,13 @@ export function createControls(container, state, onChange) {
         simBox,
         userBox,
         el('h2', { text: 'Confidence region Aₙ' }),
+        el('div', { class: 'radio-row' }, [
+            el('label', {}, [tauFixedRadio, ' fixed τ']),
+            el('label', {}, [tauCalRadio, ' calibrated']),
+        ]),
         field('τ', tauInput, 'c = σ·√(τ·log n); paper default 3'),
+        calBox,
+        tauValue,
         field('λ', lambdaInput, 'interval family scale; 2 = dyadic'),
         el('label', { class: 'check' }, [sigmaFixed, ' fix σ instead of σ̂ (eq. 10)']),
         sigmaFixedValue,
@@ -206,10 +239,11 @@ export function createControls(container, state, onChange) {
         el('label', { class: 'field' }, [el('span', { class: 'field-label', text: 'assume f is' }), band, bandHint]),
         kBox,
         field('θ', thetaInput, 'window grid ratio for the fast bounds (O(n log n))'),
+        exactBox,
     );
 
     let lastColumns = null;
-    function sync(st, { columns, equallySpaced = true, kMin = null }) {
+    function sync(st, { columns, equallySpaced = true, kMin = null, n = 0, tau = null }) {
         const isUser = st.source === USER;
         simBox.hidden = isUser;
         userBox.hidden = !isUser;
@@ -235,6 +269,17 @@ export function createControls(container, state, onChange) {
             ? 'needs equally spaced x (uses index symmetry); choose another band'
             : BANDS[st.band].note;
         kBox.hidden = st.band !== 'smooth';
+        const calibrated = st.tauMode === 'calibrated';
+        tauInput.disabled = calibrated;
+        calBox.hidden = !calibrated;
+        tauValue.hidden = !calibrated;
+        tauValue.textContent = calibrated && tau !== null ? `calibrated τ = ${tau.toPrecision(4)}` : '';
+        calFamily.options[1].disabled = n > CALIBRATE_ALL_MAX_N;
+        exactBox.hidden = st.band === 'none';
+        exactCheck.disabled = n > EXACT_MAX_N;
+        exactHint.textContent = n > EXACT_MAX_N
+            ? `available for n ≤ ${EXACT_MAX_N} (2n LPs)`
+            : '2n LPs over Aₙ ∩ shape (§5.2.1), in the worker';
         kLabel.textContent = kMin === null ? ''
             : `K = ${(st.kMultiple * kMin).toPrecision(4)} (${st.kMultiple}× K_min = ${kMin.toPrecision(4)}, x units)`;
     }

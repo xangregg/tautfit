@@ -18,7 +18,8 @@ import { createMainChart } from './chart.js';
 import { createResidualView } from './residual.js';
 import { cellEdges } from './layout.js';
 import { onThemeChange } from './theme.js';
-import { regularizeInWorker } from './lp.js';
+import { regularizeInWorker, exactBoundsInWorker, calibrateInWorker } from './lp.js';
+import { tauFromSample, coverageOfTau } from '../core/calibrate.js';
 import { METHODS } from './methods.js';
 import { BANDS } from './bands.js';
 import {
@@ -30,6 +31,10 @@ const fmt = d3.format('.4~g');
 const fmtInt = d3.format(',');
 const CACHE_LIMIT = 48; // LP fits kept
 const LP_REGION_TOL = 1e-6; // relative slack for LP solutions on the boundary of Aₙ (matches core re-check)
+const CALIBRATION_B = 2000; // Monte Carlo replicates for τ
+const CALIBRATION_SEED = 1; // fixed so a calibrated τ is reproducible
+const CALIBRATE_ALL_MAX_N = 2000; // all-intervals calibration costs O(n²) per replicate
+const EXACT_MAX_N = 300; // exact LP bounds: 2n LPs
 
 const state = {
     source: 'blocks',
@@ -49,6 +54,11 @@ const state = {
     band: 'none', // key of BANDS
     theta: 1.5, // window grid ratio for the fast bounds
     kMultiple: 2, // smoothness band: K = kMultiple × K_min (fast)
+    tauMode: 'fixed', // 'fixed' (state.tau) | 'calibrated' (Monte Carlo τₙ(α))
+    alpha: 0.95, // calibration coverage
+    calibFamily: 'chosen', // calibrate for the λ family ('chosen') or all intervals ('all', for the fast bands)
+    plugSigma: true, // calibrate with σ̂(Z), mimicking the estimated σ
+    exact: false, // also compute exact LP bounds for the band (n ≤ EXACT_MAX_N)
 };
 
 let tableCache = { text: null, table: null };
@@ -68,9 +78,10 @@ function hashText(text) {
 }
 
 /**
- * Everything that does not need the LP solver. Returns {error} when there is nothing to show.
+ * The data: observations, truth for simulated data, and notes. Returns {error} when there is nothing
+ * to show.
  */
-function deriveBase(st) {
+function deriveData(st) {
     let x;
     let y;
     let f = null;
@@ -112,21 +123,29 @@ function deriveBase(st) {
     const n = y.length;
     if (n < 2)
         return { error: 'Need at least 2 complete observations.', columns };
+    return { columns, notes, x, y, f, n, dataKey, equallySpaced };
+}
 
+/**
+ * Everything that does not need the LP solver, for a resolved τ.
+ */
+function deriveBase(st, data, tauInfo) {
+    const { columns, notes, x, y, f, n, dataKey, equallySpaced } = data;
+    const tau = tauInfo.tau;
     const sigmaHat = sigmaMAD(y);
     const sigmaUsed = st.sigmaFixed ?? sigmaHat;
-    const c = threshold(sigmaUsed, st.tau, n);
+    const c = threshold(sigmaUsed, tau, n);
     const family = multiresolution(n, st.lambda);
     const levels = multiresolutionLevels(n, st.lambda);
-    const taut = tautStringRegression(y, { sigma: sigmaUsed, tau: st.tau, intervals: family });
+    const taut = tautStringRegression(y, { sigma: sigmaUsed, tau, intervals: family });
     const tautExt = localExtremes(taut.f);
-    const regionKey = `${dataKey}|${sigmaUsed}|${st.tau}|${st.lambda}`;
+    const regionKey = `${dataKey}|${sigmaUsed}|${tau}|${st.lambda}`;
     const h = (x[n - 1] - x[0]) / (n - 1); // spacing, meaningful when equallySpaced
     // Bands are meant for τ = 3-style thresholds; they use c with σ (σ̂ unless fixed), like Aₙ.
     // K_min costs O(n·|grid|²); only the smoothness band needs it.
     const kMin = equallySpaced && st.band === 'smooth' ? smoothnessKMin(y, c, h, { theta: st.theta }) : null;
     return {
-        columns, notes, x, y, f, n, sigmaHat, sigmaUsed, c, family, levels, taut, tautExt, regionKey,
+        columns, notes, x, y, f, n, sigmaHat, sigmaUsed, tau, tauInfo, c, family, levels, taut, tautExt, regionKey,
         equallySpaced, h, kMin, edges: cellEdges(x),
     };
 }
@@ -158,17 +177,23 @@ function computeBand(base, st, getFit) {
     const theta = st.theta;
     let b;
     let extra = '';
+    let shape = null; // the same assumption for exact LP bounds (src/core/exact.js), when expressible
     if (st.band === 'monoUp' || st.band === 'monoDown') {
-        b = monotoneBounds(y, c, { direction: st.band === 'monoUp' ? 1 : -1, theta });
+        const direction = st.band === 'monoUp' ? 1 : -1;
+        b = monotoneBounds(y, c, { direction, theta });
+        shape = { type: 'monotone', direction };
     }
     else if (st.band === 'pwMono') {
         const extremes = base.tautExt.extremes.map(e => ({ type: e.type, position: Math.floor((e.start + e.end) / 2) }));
         b = piecewiseMonotoneBounds(y, c, extremes, { theta });
         extra = extremes.length ? `${extremes.length} extreme position(s) from the taut string`
             : 'taut string has no extremes: monotone in either direction';
+        // "monotone either way" is a union of two regions, not one LP
+        shape = b.segments.length ? { type: 'pwMonotone', segments: b.segments } : null;
     }
     else if (st.band === 'convex' || st.band === 'concave') {
         b = convexBounds(y, c, { concave: st.band === 'concave', theta });
+        shape = { type: 'convex', concave: st.band === 'concave' };
     }
     else if (st.band === 'pwConvex') {
         const fit = getFit('minTV1');
@@ -179,18 +204,39 @@ function computeBand(base, st, getFit) {
         const segments = curvatureSegments(base.x, fit.g);
         b = piecewiseConvexBounds(y, c, segments, { theta });
         extra = segments.map(sg => sg.type).join(' → ');
+        shape = { type: 'pwConvex', segments };
     }
     else {
         const K = st.kMultiple * base.kMin;
         b = smoothnessBounds(y, c, K, base.h, { theta });
         extra = `K = ${fmt(K)} (${st.kMultiple}× K_min)`;
+        shape = { type: 'smooth', K };
     }
     const empty = crossings(b);
     const inside = base.f ? base.f.every((v, i) => b.lb[i] <= v && v <= b.ub[i]) : null;
-    return { ...b, label: `band: ${spec.name}`, empty, inside, extra };
+    return { ...b, label: `band: ${spec.name}`, empty, inside, extra, shape };
 }
 
-function bandRows(base, band, st) {
+// The fast bands use windows outside the λ family, so their honesty needs a τ valid for all intervals
+// (PLAN.md Known issues 6, 13). Measured at n = 500, 1000 runs (exp(5t) monotone/convex, sin(4πt)
+// smoothness): τ = 3 → 95.4–96.1%; τ calibrated for the dyadic family (2.72) → 91.6–93.1%; τ calibrated
+// for all intervals (3.08) → 96.2–96.5%.
+function bandCoverageNote(base, st) {
+    if (base.tauInfo.mode === 'calibrated' && st.calibFamily === 'all') {
+        return { value: `≥ ${st.alpha} (calibrated)`,
+            note: 'τ calibrated for all intervals, which covers every window the fast bands use' };
+    }
+    if (base.tauInfo.mode === 'calibrated') {
+        return { value: 'below α', note: 'τ was calibrated for the λ family, but the fast bands use other windows: '
+            + 'measured 92–93% at α = 0.95, n = 500. Calibrate for all intervals for honest bands.' };
+    }
+    if (base.tau === 3) {
+        return { value: '≈ 95–96%', note: 'τ = 3; measured 95.4–96.1% at n = 500 (paper eq. 11 holds only marginally over all intervals)' };
+    }
+    return { value: 'unknown', note: 'depends on τ; calibrate for all intervals to get coverage α' };
+}
+
+function bandRows(base, band, st, exact) {
     const rows = [];
     const add = (label, value, title) => rows.push({ label, value, title });
     add('band', BANDS[st.band].name, band.extra || undefined);
@@ -199,11 +245,43 @@ function bandRows(base, band, st) {
         add('K_min (fast)', fmt(base.kMin), 'smallest K with a non-empty band; a lower bound on ‖g″‖∞ in x units');
     add('empty at', `${fmtInt(band.empty)} of ${fmtInt(base.n)} points`,
         band.empty ? 'the assumption is inconsistent with the data there' : 'the assumption is consistent with the data');
-    if (band.inside !== null) {
-        add('true f inside', band.inside ? 'yes' : 'no',
-            'honest bands cover f in ≥ 95% of runs (measured 95–96% at n = 500)');
+    add('coverage', bandCoverageNote(base, st).value, bandCoverageNote(base, st).note);
+    if (band.inside !== null)
+        add('true f inside', band.inside ? 'yes' : 'no', 'for this run of the simulation');
+    if (exact?.lb) {
+        let wExact = 0;
+        let wFast = 0;
+        let narrower = 0;
+        for (let i = 0; i < base.n; i++) {
+            const we = exact.ub[i] - exact.lb[i];
+            const wf = band.ub[i] - band.lb[i];
+            wExact += we / base.n;
+            wFast += wf / base.n;
+            if (we < wf)
+                narrower++;
+        }
+        add('exact LP bounds', `${fmtInt(exact.solves)} LPs, ${fmt(exact.ms / 1000)} s`,
+            `Aₙ with the λ family; mean width ${fmt(wExact)} vs fast ${fmt(wFast)}; narrower at ${narrower} of ${base.n} points`);
+        if (base.f) {
+            const inside = base.f.every((v, i) => exact.lb[i] - 1e-9 <= v && v <= exact.ub[i] + 1e-9);
+            add('true f inside exact', inside ? 'yes' : 'no');
+        }
+    }
+    else if (exact?.status) {
+        add('exact LP bounds', exact.status === 'infeasible' ? 'infeasible' : exact.status,
+            exact.status === 'infeasible' ? 'no function in Aₙ has this shape: the assumption is rejected' : undefined);
     }
     return rows;
+}
+
+function tauRow(base, st) {
+    const t = base.tauInfo;
+    if (t.mode === 'fixed')
+        return ['τ', fmt(t.tau), undefined];
+    const family = st.calibFamily === 'all' ? 'all intervals' : `λ = ${fmt(st.lambda)} family`;
+    return ['τ (calibrated)', fmt(t.tau),
+        `Monte Carlo τₙ(${st.alpha}) for ${family}${st.plugSigma ? ' with σ̂' : ''}, B = ${CALIBRATION_B}; `
+        + `95% MC interval ${fmt(t.tauLo)}–${fmt(t.tauHi)}; τ = 3 would cover ${fmt(100 * t.cov3)}%`];
 }
 
 function readoutRows(base, fit, st) {
@@ -215,7 +293,7 @@ function readoutRows(base, fit, st) {
         add('true σ', fmt(st.sigma));
     if (st.sigmaFixed !== null)
         add('σ used (fixed)', fmt(base.sigmaUsed));
-    add('τ', fmt(st.tau));
+    add(...tauRow(base, st));
     add('c = σ√(τ log n)', fmt(base.c));
     add('|𝓘ₙ|', `${fmtInt(base.family.length)} intervals`, `λ = ${fmt(st.lambda)}, singletons included`);
     add('fit', METHODS[fit.key].name);
@@ -272,7 +350,7 @@ function verdictText(base, fit) {
     return `: the smallest ${fit.lp.objectiveLabel} of any function in Aₙ is ${fmt(fit.lp.objective)}; ${extremes}.`;
 }
 
-function renderReadouts(container, base, fit, st, band) {
+function renderReadouts(container, base, fit, st, band, exact) {
     const sel = d3.select(container);
     sel.selectAll('*').remove();
     sel.append('h2').text('Readouts');
@@ -289,7 +367,7 @@ function renderReadouts(container, base, fit, st, band) {
     if (band && !band.pending) {
         sel.append('h2').text('Band');
         const bdl = sel.append('dl');
-        for (const r of bandRows(base, band, st)) {
+        for (const r of bandRows(base, band, st, exact)) {
             bdl.append('dt').text(r.label);
             bdl.append('dd').text(r.value);
             if (r.title)
@@ -309,6 +387,9 @@ function startup() {
 
     const lpCache = new Map(); // key → fit {key, g, lp} or {error}
     const inFlight = new Set();
+    const calibCache = new Map(); // key → sorted Monte Carlo sample
+    const exactCache = new Map(); // key → exact bounds result
+    const progress = new Map(); // in-flight job key → {label, fraction}
     let base = null;
     let shown = null; // {primary, overlays} currently drawn
     let shownRegion = null; // regionKey of the data behind `shown`
@@ -331,7 +412,7 @@ function startup() {
             return cached.error ? cached : analyze(cached, base);
         if (!inFlight.has(key)) {
             inFlight.add(key);
-            const req = { x: base.x, y: base.y, sigma: base.sigmaUsed, tau: state.tau, lambda: state.lambda, ...spec.lp };
+            const req = { x: base.x, y: base.y, sigma: base.sigmaUsed, tau: base.tau, lambda: state.lambda, ...spec.lp };
             if (methodKey === 'combined') {
                 req.signs = stepSigns(base.taut.f, { plateaus: 'split' });
                 if (state.fixExtremes)
@@ -354,6 +435,74 @@ function startup() {
         return null;
     }
 
+    function showProgress() {
+        const jobs = [...progress.values()].map(p => `${p.label} ${Math.round(100 * p.fraction)}%`);
+        return jobs.join(' · ');
+    }
+
+    function calibKey(n) {
+        const fam = state.calibFamily === 'all' ? 'all' : `λ${state.lambda}`;
+        return `${n}|${fam}|${state.plugSigma}|${CALIBRATION_B}|${CALIBRATION_SEED}`;
+    }
+
+    // τ for this data: fixed, or calibrated from a cached Monte Carlo sample (started on demand).
+    function resolveTau(data) {
+        if (state.tauMode === 'fixed')
+            return { tau: state.tau, mode: 'fixed' };
+        if (state.calibFamily === 'all' && data.n > CALIBRATE_ALL_MAX_N)
+            return { error: `All-interval calibration is limited to n ≤ ${CALIBRATE_ALL_MAX_N} (O(n²) per replicate).` };
+        const key = calibKey(data.n);
+        const sorted = calibCache.get(key);
+        if (sorted) {
+            const t = tauFromSample(sorted, state.alpha, data.n);
+            return { ...t, mode: 'calibrated', cov3: coverageOfTau(sorted, 3, data.n) };
+        }
+        if (!progress.has(key)) {
+            progress.set(key, { label: 'Calibrating τ', fraction: 0 });
+            calibrateInWorker({
+                n: data.n, lambda: state.lambda, family: state.calibFamily, B: CALIBRATION_B,
+                seed: CALIBRATION_SEED, plugSigma: state.plugSigma,
+            }, fr => {
+                progress.get(key).fraction = fr;
+                status.text(showProgress());
+            }).then(({ sorted: s }) => {
+                calibCache.set(key, s);
+            }).catch(err => {
+                console.error(err);
+                status.classed('error', true).text(`Calibration failed: ${err.message}`);
+            }).finally(() => {
+                progress.delete(key);
+                update();
+            });
+        }
+        return { pending: true };
+    }
+
+    // Exact LP bounds for the band, if requested and possible; null, {pending}, or the result.
+    function getExact(band) {
+        if (!state.exact || !band || band.pending || !band.shape || base.n > EXACT_MAX_N)
+            return null;
+        const key = `${base.regionKey}|${state.band}|${JSON.stringify(band.shape)}`;
+        const cached = exactCache.get(key);
+        if (cached)
+            return cached;
+        if (!progress.has(key)) {
+            progress.set(key, { label: 'Exact LP bounds', fraction: 0 });
+            exactBoundsInWorker({ x: base.x, y: base.y, shape: band.shape, sigma: base.sigmaUsed, tau: base.tau, lambda: state.lambda },
+                fr => {
+                    progress.get(key).fraction = fr;
+                    status.text(showProgress());
+                })
+                .then(r => exactCache.set(key, r))
+                .catch(err => exactCache.set(key, { status: `error: ${err.message}` }))
+                .finally(() => {
+                    progress.delete(key);
+                    render();
+                });
+        }
+        return { pending: true };
+    }
+
     function render() {
         if (!base || base.error)
             return;
@@ -365,45 +514,69 @@ function startup() {
         }
         const band = computeBand(base, state, getFit);
         const bandPending = Boolean(band?.pending);
-        const pending = !primary || bandPending;
+        const exact = getExact(band);
+        const exactPending = Boolean(exact?.pending);
+        const pending = !primary || bandPending || exactPending;
         charts.classList.toggle('pending', pending);
         readouts.classList.toggle('pending', pending);
         status.classed('error', false).text(!primary ? `Solving ${METHODS[state.method].name}…`
-            : bandPending ? 'Solving min TV(g′) for the convexity intervals…' : '');
+            : bandPending ? 'Solving min TV(g′) for the convexity intervals…'
+                : exactPending ? showProgress() || 'Exact LP bounds…' : '');
         if (pending && shown)
             return; // keep the previous frame, dimmed, until the solve returns
         const drawPrimary = primary ?? getFit('taut');
-        shown = { primary: drawPrimary, overlays, band: bandPending ? null : band };
+        shown = { primary: drawPrimary, overlays, band: bandPending ? null : band, exact: exactPending ? null : exact };
         draw();
-        renderReadouts(readouts, base, drawPrimary, state, shown.band);
+        renderReadouts(readouts, base, drawPrimary, state, shown.band, shown.exact);
     }
 
     function draw() {
         if (!shown)
             return;
-        const { primary, overlays, band } = shown;
+        const { primary, overlays, band, exact } = shown;
         const fits = [...overlays, primary].map(fit => ({
             key: fit.key, label: METHODS[fit.key].name, g: fit.g, step: METHODS[fit.key].step,
             runs: localExtremes(fit.g, METHODS[fit.key].extremesTol).runs,
             colorVar: METHODS[fit.key].color, primary: fit === primary,
         }));
         chart.render({ x: base.x, y: base.y, f: state.showTruth ? base.f : null, fits,
-            extremes: primary.ext.extremes, edges: base.edges, band });
+            extremes: primary.ext.extremes, edges: base.edges, band,
+            exact: exact?.lb ? { lb: exact.lb, ub: exact.ub, label: 'exact LP bounds' } : null });
         residual.render({ x: base.x, edges: base.edges, levels: base.levels, w: primary.w, ratios: primary.ratios,
             limit: primary.limit });
     }
 
     function update() {
+        let data;
         try {
-            base = deriveBase(state);
+            data = deriveData(state);
+            if (!data.error) {
+                const tauInfo = resolveTau(data);
+                if (tauInfo.pending) {
+                    controls.sync(state, { columns: data.columns, equallySpaced: data.equallySpaced, kMin: null, n: data.n });
+                    charts.classList.add('pending');
+                    readouts.classList.add('pending');
+                    status.classed('error', false).text(showProgress() || 'Calibrating τ…');
+                    return; // update() runs again when the calibration arrives
+                }
+                base = tauInfo.error ? { error: tauInfo.error, columns: data.columns } : deriveBase(state, data, tauInfo);
+            }
+            else {
+                base = data;
+            }
         }
         catch (err) {
             base = { error: String(err.message ?? err), columns: [] };
             console.error(err);
         }
-        controls.sync(state, { columns: base.columns, equallySpaced: base.equallySpaced ?? true, kMin: base.kMin ?? null });
+        controls.sync(state, {
+            columns: base.columns, equallySpaced: base.equallySpaced ?? true, kMin: base.kMin ?? null,
+            n: base.n ?? 0, tau: base.tau ?? null,
+        });
         charts.classList.toggle('empty', Boolean(base.error));
         if (base.error) {
+            charts.classList.remove('pending');
+            readouts.classList.remove('pending');
             status.classed('error', false).text(base.error);
             d3.select(readouts).selectAll('*').remove();
             shown = null;

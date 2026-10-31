@@ -26,6 +26,7 @@ const fmt = d3.format('.4~g');
  * @property {{type: 'max'|'min', start: number, end: number}[]} extremes  local extremes of the primary
  * @property {Float64Array} edges   cell edges (layout.cellEdges)
  * @property {{lb: Float64Array, ub: Float64Array, label: string}|null} band  pointwise confidence band
+ * @property {{lb: Float64Array, ub: Float64Array, label: string}|null} [exact]  exact LP bounds, dashed
  */
 
 /**
@@ -132,6 +133,12 @@ export function createMainChart(container) {
                 gBand.append('path').attr('class', 'band-edge')
                     .attr('d', d3.line().defined(i => Number.isFinite(v[i])).x(i => sx(x[i])).y(i => px(v[i]))(d3.range(n)));
             }
+            if (m.exact) {
+                for (const v of [m.exact.lb, m.exact.ub]) {
+                    gBand.append('path').attr('class', 'band-exact')
+                        .attr('d', d3.line().defined(i => Number.isFinite(v[i])).x(i => sx(x[i])).y(i => px(v[i]))(d3.range(n)));
+                }
+            }
         }
         // A piecewise-constant fit is drawn over each observation's cell, so plateaus show their extent.
         const steps = fit => {
@@ -181,6 +188,8 @@ export function createMainChart(container) {
         const items = [{ label: 'data', color: colors.muted, dot: true }, ...series];
         if (m.band)
             items.push({ label: m.band.label, color: colors['band'], box: true });
+        if (m.band && m.exact)
+            items.push({ label: m.exact.label, color: colors.ink, glyph: '┄' });
         if (shown.length)
             items.push({ label: 'local max / min plateau', color: colors.ink, glyph: '▲▼' });
         else if (m.extremes.length)
@@ -232,6 +241,8 @@ export function createMainChart(container) {
             const b = model.band;
             const show = v => (v === Infinity ? '+∞' : v === -Infinity ? '−∞' : fmt(v));
             rows.push([`[${show(b.lb[i])}, ${show(b.ub[i])}]`, b.lb[i] > b.ub[i] ? 'band (empty here)' : 'band']);
+            if (model.exact)
+                rows.push([`[${show(model.exact.lb[i])}, ${show(model.exact.ub[i])}]`, 'exact LP bounds']);
         }
         const ext = model.extremes.find(e => e.start <= i && i <= e.end);
         const note = ext

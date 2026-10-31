@@ -216,6 +216,12 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
     20/20 seeds, matching the paper's pattern (104.5 fast vs 115.0).
 12. Convex/concave bounds (eqs. 66–71) assume equally spaced design points, as the paper says in §5.2.2; this
     plan's §1.10 originally listed them among the order-only methods.
+13. Eq. 11 (τ = 3 with σ̂ covers ≥ 0.95 for all n ≥ 500) holds for the dyadic family but only marginally, or
+    not at all, for all intervals. Pure-noise Monte Carlo, B = 4000, σ̂ plugged in: dyadic 97.7% (n = 500),
+    98.5% (n = 1000); all intervals 93.1% ± 0.8 (n = 500), 94.8% ± 0.7 (n = 1000); with σ known, all intervals
+    95.0% at n = 500. Calibrated τ₅₀₀(0.95): dyadic 2.69, all intervals 3.12. Since the fast bands' honesty rests on
+    all-interval coverage (issue 6), a τ calibrated for the dyadic family is too small for them (band coverage
+    91.6–93.1% at n = 500), while one calibrated for all intervals gives 96.2–96.5%. The UI says which applies.
 
 ---
 
@@ -259,6 +265,10 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
   one ranged row with 2 nonzeros (O(n) total instead of O(n log n)); derivatives w.r.t. τ = (m−1)·t so
   coefficients are O(1) (in t units Dᵏ ~ mᵏ, ~10⁹ for TV(g″)); objectives converted to x units after.
 - Node tests import `highs` from node_modules and call the same `regularize()`.
+- *Added in M5:* `{id, task: 'exactBounds', spec}` and `{id, task: 'calibrate', spec}`, both sending
+  `{id, progress}` messages (≤ 10/s) before the result. Exact bounds reuse one persistent HiGHS model and change
+  only the objective (`changeColCost`), so each of the 2m solves warm-starts; a warm solve occasionally ends
+  'unknown' (≈ 1 in 1600) and is retried cold after `clearSolver()`.
 
 ### UI (`src/ui/`, D3 via import map)
 
@@ -363,8 +373,20 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         dragging extreme positions (stretch goal).
 
 ### M5 — Calibration and exact bounds
-- [ ] Monte Carlo τₙ(α) in a worker with caching; UI switch "τ = 3" vs "calibrated α"
-- [ ] Exact LP bounds for n ≤ 300 with progress; compare visually with fast bounds (paper Fig. 3)
+- [x] Monte Carlo τₙ(α) in a worker with caching; UI switch "τ = 3" vs "calibrated α"
+      → `calibrate.js`: sorted sample of M (σ̂ plug-in by default) so α changes are instant; τ from the ⌈αB⌉-th
+        order statistic with a 95% Monte Carlo interval; calibrate for the λ family or for all intervals (n ≤ 2000,
+        O(n²) per replicate; 1.2 s at n = 1024, B = 2000). Tests: brute-force statistic, out-of-sample coverage
+        within ±2.5% of α, and Known issue 13 (τ = 3 covers ≥ 95% for dyadic, < 95% for all intervals at n = 500).
+        The band readout states the coverage that applies to the chosen τ (issue 13).
+- [x] Exact LP bounds for n ≤ 300 with progress; compare visually with fast bounds (paper Fig. 3)
+      → `exact.js` for every band shape (monotone, piecewise monotone, convex/concave, piecewise convex, ‖g″‖∞ ≤ K);
+        divided-difference shape rows, so convex/smoothness work at unequal spacing too. n = 300 takes 0.7 s
+        (monotone) to 1.7 s (convex) in the browser (paper: ~12 h). Tests: with all intervals the exact bounds are at
+        least as tight as every fast bound (cross-checks both implementations); warm = cold solves; infeasible
+        shape detected; smoothness infeasible just below the LP K_min and feasible just above; unequal spacing; ties.
+        With the dyadic family the exact bounds are *wider* than the fast monotone bounds (exp(5t), n = 300: mean
+        width 16.2 vs 13.7) and about equal for convex (10.15 vs 9.96), since the fast bounds use extra windows.
 
 ### M6 — Polish and deploy
 - [ ] URL-hash state, CSV export of fit and bands, About panel with the paper reference and method notes

@@ -474,3 +474,16 @@ footer a {
     border-radius: 2px;
 }
 
+.band-exact {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 1.25;
+    stroke-dasharray: 4 3;
+}
+
+.radio-row {
+    display: flex;
+    gap: 0.8rem;
+    margin-bottom: 0.4rem;
+}
+

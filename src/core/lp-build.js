@@ -96,42 +96,19 @@ function createBuilder() {
 }
 
 /**
- * @typedef {object} RegularizationSpec
- * @property {Float64Array} ys        standardized observations, ordered by x (length n)
- * @property {Int32Array} group       tie group of each observation (tieGroups)
- * @property {Float64Array} tau       distinct abscissae in index units τ_j (length m)
- * @property {{lo: number, hi: number}[]} intervals  family 𝓘ₙ (observation indices)
- * @property {number} c               threshold in standardized units
- * @property {'minTV'|'minSup'} objective
- * @property {number} k               derivative order: minTV k ∈ {0,1,2}, minSup k ∈ {1,2}
- * @property {Int8Array} [signs]      optional sign of h_{j+1} − h_j per distinct step (length m − 1):
- *                                    +1 ⇒ ≥ 0, −1 ⇒ ≤ 0, 0 ⇒ free
- * @property {Array<{groups: number[], mid: number, value: number, type: 'max'|'min'}>} [fixed]
- *     optional extremes to pin: h ≤ value (max) or ≥ value (min) on `groups`, h = value at `mid`
- */
-
-/**
- * Build the LP for one regularization problem.
+ * Add the columns and rows shared by all models: h_j (free, or bounded by `fixed`), prefix columns P_k,
+ * prefix rows, one ranged Aₙ row per interval, and optional step-sign rows.
  *
- * minTV(k): minimize Σ_j |Dᵏ_{j+1} − Dᵏ_j| via ΔDᵏ_j − u⁺_j + u⁻_j = 0, u± ≥ 0.
- * minSup(k): minimize s subject to −s ≤ Dᵏ_j ≤ s.
- *
- * @param {RegularizationSpec} spec
- * @returns {{model: object, hStart: number, m: number}}  model: HiGHS ModelData; h_j is column
- *     hStart + j
+ * @param {ReturnType<typeof createBuilder>} b
+ * @param {{ys: Float64Array, group: Int32Array, tau: Float64Array, intervals: {lo: number, hi: number}[],
+ *     c: number, signs?: Int8Array, fixed?: Array<{groups: number[], mid: number, value: number,
+ *     type: 'max'|'min'}>}} spec
+ * @returns {number}  hStart: column of h_0 (h_j is hStart + j)
  */
-export function buildRegularization(spec) {
-    const { ys, group, tau, intervals, c, objective, k } = spec;
+function addRegion(b, spec) {
+    const { ys, group, tau, intervals, c } = spec;
     const n = ys.length;
     const m = tau.length;
-    if (objective !== 'minTV' && objective !== 'minSup')
-        throw new RangeError(`unknown objective '${objective}'`);
-    if (objective === 'minTV' && !(k >= 0 && k <= 2))
-        throw new RangeError('minTV needs k ∈ {0, 1, 2}');
-    if (objective === 'minSup' && !(k >= 1 && k <= 2))
-        throw new RangeError('minSup needs k ∈ {1, 2}');
-
-    const b = createBuilder();
     const hLower = new Float64Array(m).fill(-Infinity);
     const hUpper = new Float64Array(m).fill(Infinity);
     for (const ex of spec.fixed ?? []) {
@@ -186,7 +163,94 @@ export function buildRegularization(spec) {
                 b.addRow([hStart + j + 1, hStart + j], [1, -1], -Infinity, 0);
         }
     }
+    return hStart;
+}
 
+/**
+ * Aₙ plus shape constraints and no objective (all costs 0), for the exact bounds of §5.2.1 / §1.9: the
+ * caller sets one h_j's cost to ±1 at a time.
+ *
+ * Shape rows, all on distinct x (second divided differences D²_j over h_j..h_{j+2}, τ units):
+ *   signs      step signs as in buildRegularization (monotone, piecewise monotone)
+ *   curvature  per distinct second difference: +1 ⇒ D²_j ≥ 0 (convex there), −1 ⇒ ≤ 0, 2 ⇒ = 0, 0 free
+ *   maxCurv    |D²_j| ≤ maxCurv (smoothness ‖g″‖∞ ≤ K, converted to τ units and standardized y)
+ * D²_j ≥ 0 is exactly convexity of the interpolant at any spacing, and ‖f″‖∞ ≤ K implies |D²_j| ≤ K
+ * (mean value theorem), so these constraints are valid without equal spacing.
+ *
+ * @param {RegularizationSpec & {curvature?: Int8Array, maxCurv?: number}} spec
+ * @returns {{model: object, hStart: number, m: number}}
+ */
+export function buildShapeRegion(spec) {
+    const m = spec.tau.length;
+    const b = createBuilder();
+    const hStart = addRegion(b, spec);
+    if (spec.curvature || spec.maxCurv !== undefined) {
+        const d = differenceRows(spec.tau, 2);
+        for (let j = 0; j < d.length; j++) {
+            const cols = [hStart + j, hStart + j + 1, hStart + j + 2];
+            let lo = -Infinity;
+            let hi = Infinity;
+            const sgn = spec.curvature?.[j] ?? 0;
+            if (sgn === 2) {
+                // linear: both convex and concave
+                lo = 0;
+                hi = 0;
+            }
+            else if (sgn > 0) {
+                lo = 0;
+            }
+            else if (sgn < 0) {
+                hi = 0;
+            }
+            if (spec.maxCurv !== undefined) {
+                lo = Math.max(lo, -spec.maxCurv);
+                hi = Math.min(hi, spec.maxCurv);
+            }
+            if (lo > -Infinity || hi < Infinity)
+                b.addRow(cols, d[j], lo, hi);
+        }
+    }
+    return { model: b.finish(), hStart, m };
+}
+
+/**
+ * @typedef {object} RegularizationSpec
+ * @property {Float64Array} ys        standardized observations, ordered by x (length n)
+ * @property {Int32Array} group       tie group of each observation (tieGroups)
+ * @property {Float64Array} tau       distinct abscissae in index units τ_j (length m)
+ * @property {{lo: number, hi: number}[]} intervals  family 𝓘ₙ (observation indices)
+ * @property {number} c               threshold in standardized units
+ * @property {'minTV'|'minSup'} objective
+ * @property {number} k               derivative order: minTV k ∈ {0,1,2}, minSup k ∈ {1,2}
+ * @property {Int8Array} [signs]      optional sign of h_{j+1} − h_j per distinct step (length m − 1):
+ *                                    +1 ⇒ ≥ 0, −1 ⇒ ≤ 0, 0 ⇒ free
+ * @property {Array<{groups: number[], mid: number, value: number, type: 'max'|'min'}>} [fixed]
+ *     optional extremes to pin: h ≤ value (max) or ≥ value (min) on `groups`, h = value at `mid`
+ */
+
+/**
+ * Build the LP for one regularization problem.
+ *
+ * minTV(k): minimize Σ_j |Dᵏ_{j+1} − Dᵏ_j| via ΔDᵏ_j − u⁺_j + u⁻_j = 0, u± ≥ 0.
+ * minSup(k): minimize s subject to −s ≤ Dᵏ_j ≤ s.
+ *
+ * @param {RegularizationSpec} spec
+ * @returns {{model: object, hStart: number, m: number}}  model: HiGHS ModelData; h_j is column
+ *     hStart + j
+ */
+export function buildRegularization(spec) {
+    const { ys, group, tau, intervals, c, objective, k } = spec;
+    const n = ys.length;
+    const m = tau.length;
+    if (objective !== 'minTV' && objective !== 'minSup')
+        throw new RangeError(`unknown objective '${objective}'`);
+    if (objective === 'minTV' && !(k >= 0 && k <= 2))
+        throw new RangeError('minTV needs k ∈ {0, 1, 2}');
+    if (objective === 'minSup' && !(k >= 1 && k <= 2))
+        throw new RangeError('minSup needs k ∈ {1, 2}');
+
+    const b = createBuilder();
+    const hStart = addRegion(b, spec);
     if (objective === 'minTV') {
         // ΔDᵏ_j = Dᵏ_{j+1} − Dᵏ_j over h_j..h_{j+k+1}
         const d = differenceRows(tau, k);
