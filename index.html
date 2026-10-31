@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>nicefit: simplest fits in a confidence region</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="styles.css">
+    <script type="importmap">
+    {
+        "imports": {
+            "d3": "https://cdn.jsdelivr.net/npm/d3@7.9.0/+esm"
+        }
+    }
+    </script>
+    <script type="module" src="src/ui/main.js"></script>
+</head>
+<body>
+    <header>
+        <h1>nicefit</h1>
+        <p class="subtitle">
+            Nonparametric regression after Davies, Kovac &amp; Meise (2009):
+            the simplest functions consistent with the data.
+        </p>
+    </header>
+    <main>
+        <section id="controls" aria-label="Controls"></section>
+        <section id="charts" aria-label="Charts">
+            <div id="main-chart"></div>
+            <div id="residual-view"></div>
+        </section>
+        <section id="readouts" aria-label="Readouts"></section>
+    </main>
+    <footer>
+        <p id="status">Loading…</p>
+    </footer>
+</body>
+</html>
