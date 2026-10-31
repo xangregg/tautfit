@@ -205,6 +205,13 @@ input[type=file] {
     border-radius: 1px;
 }
 
+.legend .key.glyph {
+    width: auto;
+    height: auto;
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+}
+
 .legend .key.dot {
     width: 8px;
     height: 8px;
@@ -318,6 +325,10 @@ input[type=file] {
 
 .tooltip-note {
     margin-top: 0.25rem;
+    color: var(--ink-2);
+}
+
+.tooltip-note.alert {
     color: var(--violation);
     font-weight: 600;
 }

@@ -1,5 +1,5 @@
-// App entry point: state → derived model → views. M1 shows the data, the constant candidate
-// g = mean(y), and the residual view of that candidate against Aₙ.
+// App entry point: state → derived model → views. The fit (taut string or the constant mean) is
+// shown with its local extremes, and the residual view shows it against Aₙ.
 
 import * as d3 from 'd3';
 import { SIGNALS, simulate } from '../core/signals.js';
@@ -7,6 +7,8 @@ import { parseTable, prepareXY, rowIndex } from '../core/data.js';
 import { sigmaMAD } from '../core/sigma.js';
 import { multiresolution, multiresolutionLevels } from '../core/intervals.js';
 import { threshold, checkRegion } from '../core/region.js';
+import { tautStringRegression } from '../core/tautstring.js';
+import { localExtremes } from '../core/extremes.js';
 import { createControls } from './controls.js';
 import { createMainChart } from './chart.js';
 import { createResidualView } from './residual.js';
@@ -28,7 +30,10 @@ const state = {
     tau: 3,
     lambda: 2,
     sigmaFixed: null, // number to override σ̂
+    method: 'taut', // 'taut' | 'constant'
 };
+
+const METHOD_LABELS = { taut: 'taut string', constant: 'constant mean(y)' };
 
 let tableCache = { text: null, table: null };
 
@@ -83,12 +88,20 @@ function derive(st) {
     const c = threshold(sigmaUsed, st.tau, n);
     const family = multiresolution(n, st.lambda);
     const levels = multiresolutionLevels(n, st.lambda);
-    const mean = d3.mean(y);
-    const g = new Float64Array(n).fill(mean);
+    let g;
+    let taut = null;
+    if (st.method === 'taut') {
+        taut = tautStringRegression(y, { sigma: sigmaUsed, tau: st.tau, intervals: family });
+        g = taut.f;
+    }
+    else {
+        g = new Float64Array(n).fill(d3.mean(y));
+    }
+    const ext = localExtremes(g);
     const check = checkRegion(y, g, family, c);
     const rowChecks = levels.map(level => checkRegion(y, g, level, c));
     return {
-        columns, notes, x, y, f, n, g, mean, sigmaHat, sigmaUsed, c, family, levels, check,
+        columns, notes, x, y, f, n, g, taut, ext, sigmaHat, sigmaUsed, c, family, levels, check,
         w: rowChecks.map(r => r.w),
         ratios: rowChecks.map(r => r.ratios),
         edges: cellEdges(x),
@@ -107,7 +120,13 @@ function renderReadouts(container, model, st) {
     add('τ', fmt(st.tau));
     add('c = σ√(τ log n)', fmt(model.c));
     add('|𝓘ₙ|', `${fmtInt(model.family.length)} intervals`, `λ = ${fmt(st.lambda)}, singletons included`);
-    add('candidate g', `constant ${fmt(model.mean)}`, 'g = mean(y)');
+    add('fit', METHOD_LABELS[st.method]);
+    const { nMax, nMin } = model.ext;
+    add('local extremes', fmtInt(nMax + nMin), `${nMax} max, ${nMin} min`);
+    if (model.taut) {
+        add('iterations', fmtInt(model.taut.iterations),
+            model.taut.converged ? 'tube squeezes until the fit is in Aₙ' : 'stopped at the iteration cap');
+    }
     const worst = model.family[model.check.argMax];
     add('max |w(I)| / c', fmt(model.check.maxRatio),
         `at #${worst.lo + 1}–${worst.hi + 1} (|I| = ${worst.hi - worst.lo + 1})`);
@@ -117,10 +136,28 @@ function renderReadouts(container, model, st) {
     sel.selectAll('*').remove();
     sel.append('h2').text('Readouts');
     const verdict = sel.append('p').attr('class', `verdict ${model.check.ok ? 'ok' : 'bad'}`);
-    verdict.append('strong').text(model.check.ok ? 'constant ∈ Aₙ' : 'constant ∉ Aₙ');
-    verdict.append('span').text(model.check.ok
-        ? ': a constant is consistent with the data, so the simplest fit is a constant.'
-        : ': the data need a non-constant fit.');
+    const name = METHOD_LABELS[st.method];
+    verdict.append('strong').text(`${name} ${model.check.ok ? '∈' : '∉'} Aₙ`);
+    const k = model.ext.nMax + model.ext.nMin;
+    let text;
+    if (st.method === 'constant') {
+        text = model.check.ok
+            ? ': a constant is consistent with the data, so the simplest fit is a constant.'
+            : ': the data need a non-constant fit.';
+    }
+    else if (model.check.ok) {
+        const flat = model.ext.runs.length === 1;
+        text = k === 0
+            ? (flat
+                ? ': a constant is consistent with the data, so the simplest fit is a constant.'
+                : ': a monotone fit (no local extremes) is consistent with the data.')
+            : `: ${k} local extreme${k === 1 ? '' : 's'}, the taut string's approximation to the fewest `
+                + 'of any function in Aₙ.';
+    }
+    else {
+        text = ': the squeezing did not reach Aₙ within the iteration cap.';
+    }
+    verdict.append('span').text(text);
     const dl = sel.append('dl');
     for (const r of rows) {
         dl.append('dt').text(r.label);
@@ -144,7 +181,8 @@ function startup() {
         if (!model || model.error)
             return;
         chart.render({ x: model.x, y: model.y, f: state.showTruth ? model.f : null, g: model.g,
-            gLabel: 'constant mean(y)', edges: model.edges });
+            gLabel: METHOD_LABELS[state.method], gStep: true, gRuns: model.ext.runs,
+            extremes: model.ext.extremes, edges: model.edges });
         residual.render(model);
     }
 

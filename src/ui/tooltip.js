@@ -20,9 +20,10 @@ function getEl() {
  * @param {number} pageY
  * @param {string} title  first line
  * @param {Array<[string, string, string?]>} rows  [value, label, optional swatch color]
- * @param {string} [note]  optional emphasized last line
+ * @param {string} [note]  optional last line
+ * @param {boolean} [alert=false]  style the note as a warning
  */
-export function showTooltip(pageX, pageY, title, rows, note) {
+export function showTooltip(pageX, pageY, title, rows, note, alert = false) {
     const tip = getEl();
     tip.replaceChildren();
     const head = document.createElement('div');
@@ -47,7 +48,7 @@ export function showTooltip(pageX, pageY, title, rows, note) {
     }
     if (note) {
         const n = document.createElement('div');
-        n.className = 'tooltip-note';
+        n.className = alert ? 'tooltip-note alert' : 'tooltip-note';
         n.textContent = note;
         tip.appendChild(n);
     }

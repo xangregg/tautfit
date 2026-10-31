@@ -143,6 +143,13 @@ export function createControls(container, state, onChange) {
     sigmaFixed.addEventListener('change', sendSigmaFixed);
     sigmaFixedValue.addEventListener('input', sendSigmaFixed);
 
+    const method = el('select', {}, [
+        el('option', { value: 'taut', text: 'Taut string' }),
+        el('option', { value: 'constant', text: 'Constant' }),
+    ]);
+    method.value = state.method;
+    method.addEventListener('change', () => onChange({ method: method.value }));
+
     container.append(
         el('h2', { text: 'Data' }),
         field('dataset', source),
@@ -153,6 +160,8 @@ export function createControls(container, state, onChange) {
         field('λ', lambdaInput, 'interval family scale; 2 = dyadic'),
         el('label', { class: 'check' }, [sigmaFixed, ' fix σ instead of σ̂ (eq. 10)']),
         sigmaFixedValue,
+        el('h2', { text: 'Fit' }),
+        field('method', method, 'taut string: fewest local extremes in Aₙ (§3.2)'),
     );
 
     let lastColumns = null;

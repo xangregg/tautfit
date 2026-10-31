@@ -61,6 +61,7 @@ export function createResidualView(container, { onHover }) {
 
     function render(m) {
         model = m;
+        hover.attr('visibility', 'hidden');
         const width = container.clientWidth;
         const rows = m.levels.length;
         const height = MARGIN.top + rows * ROW_H + MARGIN.bottom;
@@ -160,7 +161,7 @@ export function createResidualView(container, { onHover }) {
         showTooltip(event.pageX, event.pageY, `${where}  (#${iv.lo + 1}–${iv.hi + 1}, |I| = ${len})`, [
             [fmtRatio(ratio), '|w(I)| / c'],
             [fmt(w), `w(I)${sign ? ` · ${sign}` : ''}`],
-        ], ratio > 1 ? 'Violation: this constraint of Aₙ fails' : undefined);
+        ], ratio > 1 ? 'Violation: this constraint of Aₙ fails' : undefined, true);
         onHover(iv);
     });
     overlay.on('pointerleave', () => {

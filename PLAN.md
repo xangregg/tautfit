@@ -53,7 +53,9 @@ M' = max |ΣZ|/(σ̂(Z)√|I|)) to account for estimating σ. Cache results by (
 Goal: a member of Aₙ with the fewest local extremes. Output f̃ is piecewise constant.
 
 1. Cumulative sums (1-based nodes): Y₀ = 0, Yₖ = Yₖ₋₁ + yₖ.
-2. Tube widths λ₀..λₙ with λ₀ = λₙ = 0. Initial interior widths λᵢ = max(Y) − min(Y).
+2. Tube widths λ₀..λₙ with λ₀ = λₙ = 0. Initial interior widths λᵢ = max(Yᶜ) − min(Yᶜ) on the mean-centered
+   sums Yᶜᵢ = Yᵢ − i·Yₙ/n (shift-invariant default, decided in M2). The paper uses max(Y) − min(Y) on the raw
+   sums; that is available as `initialWidth: 'raw'` and is what the ftnonpar fixture test uses (Known issue 9).
 3. Tube: lower Lᵢ = Yᵢ − λᵢ, upper Uᵢ = Yᵢ + λᵢ at nodes i = 0..n, linear between nodes.
 4. Taut string F̃: the shortest path from (0, 0) to (n, Yₙ) staying inside the tube.
    f̃ᵢ = F̃(i) − F̃(i−1), i = 1..n.
@@ -78,8 +80,8 @@ Davies & Kovac (2001, appendix) describe an O(n) version. Implement carefully wi
   Fine for n ≤ 200.
 - **KKT check (any n):** with f̃ as above, at each interior node i:
   inside the tube (Lᵢ + ε < F̃ᵢ < Uᵢ − ε) ⇒ f̃ᵢ = f̃ᵢ₊₁;
-  touching upper (F̃ᵢ = Uᵢ) ⇒ f̃ᵢ ≥ f̃ᵢ₊₁;
-  touching lower (F̃ᵢ = Lᵢ) ⇒ f̃ᵢ ≤ f̃ᵢ₊₁;
+  touching upper (F̃ᵢ = Uᵢ) ⇒ f̃ᵢ ≤ f̃ᵢ₊₁;   *(corrected in M2; this line originally had ≥, see Known issue 8)*
+  touching lower (F̃ᵢ = Lᵢ) ⇒ f̃ᵢ ≥ f̃ᵢ₊₁;
   plus feasibility Lᵢ − ε ≤ F̃ᵢ ≤ Uᵢ + ε.
 
 **Counting local extremes:** compress f̃ into runs of equal values (relative tolerance 1e−9); a run is a
@@ -185,6 +187,17 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
    asymptotic value 2). Verify coverage by simulation (§4, M4) rather than assuming it.
 7. Appendix 7.3 says the dyadic family "consists of at most n subsets"; with all levels it has up to ≈ 2n
    (n singletons + n/2 pairs + …). Harmless; noted so test bounds use 2n + log₂n.
+8. *(PLAN error, not the paper's.)* §1.5's KKT check originally had the bend directions swapped. For
+   min Σ(Fᵢ − Fᵢ₋₁)² s.t. Fᵢ ≤ Uᵢ, stationarity gives 2(f̃ᵢ − f̃ᵢ₊₁) + μ = 0 with μ ≥ 0, so at an upper
+   contact f̃ᵢ ≤ f̃ᵢ₊₁ (the string bends up around the upper boundary; e.g. F₀ = F₂ = 0, U₁ = −1 gives
+   slopes −1, +1). Fixed in §1.5; `checkKKT` uses the corrected signs and a test rejects the swapped one.
+9. The taut-string algorithm of appendix 7.3 is not shift-equivariant: the initial width
+   max(Y) − min(Y) uses the raw cumulative sums, so adding a constant to y changes the width schedule
+   and hence the fit (beyond the shift). Measured at σ = 1, n = 1024: shifting y by ±10 or ±100 moved
+   the fit by up to 1.4 (Blocks), 2.7 (HeaviSine), 4.4 (Doppler), with the same number of extremes
+   and both fits in Aₙ. **Decision (M2): default to the range of the mean-centered sums**, which makes
+   f(y + a) = f(y) + a (tested to 1e−9); the paper's version stays available as `initialWidth: 'raw'`
+   and matches ftnonpar's pmreg to ≤ 4e−12.
 
 ---
 
@@ -267,13 +280,28 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         on the main chart
 
 ### M2 — Taut string
-- [ ] O(n) taut string; reference solver; KKT checker
-- [ ] Tests: matches reference solver (n ≤ 200, random tubes, tol 1e−9); passes KKT for n = 10⁴;
+- [x] O(n) taut string; reference solver; KKT checker
+      → funnel algorithm with hull chains (`tautString`); projected SOR reference with a scale-relative
+        stopping rule (an absolute 1e−14 never triggered); a mutation check confirmed both oracles catch
+        broken variants
+- [x] Tests: matches reference solver (n ≤ 200, random tubes, tol 1e−9); passes KKT for n = 10⁴;
       final f̃ ∈ Aₙ; noise-free Blocks/Bumps/Doppler at moderate noise recover the true number of extremes
       in a stated fraction of seeds; pure noise → 0 extremes in ≥ ~95% of seeds
-- [ ] Optional fixtures: R ftnonpar `pmreg` output on the same simulated data (see §6) → compare extremes count
+      → exact recovery over 200 seeds (σ = 1, sd 7, n = 1024): Blocks 99.5%, Bumps 100%, HeaviSine 94%;
+        sin(4πt) 100%; pure noise 99% zero extremes; exp(5t) 99.5% zero. Doppler has 39 extremes on the
+        grid, most far below the noise, so the test checks minimality instead (fit count ≤ 39; median 24).
+- [x] Optional fixtures: R ftnonpar `pmreg` output on the same simulated data (see §6) → compare extremes count
       and fit closely (note parameter names may differ from τ; read its docs)
-- [ ] UI: taut string fit, extremes markers, iterations; residual view updates
+      → `tools/pmreg-inputs.mjs` + `tools/pmreg-fixtures.R` (compiles only ftnonpar's `src/strings.c`, no
+        gfortran needed) → `test/fixtures/pmreg.json`, 10 cases. pmreg defaults differ from the paper
+        (thr.const 2.3, dyad.factor 1.1, extra global squeezing after convergence, extremes set to local
+        means, isotonic post-processing); the script's `pmregPaper` turns those off. Result: fits agree to
+        ≤ 4e−12 with identical iteration and extreme counts (using `initialWidth: 'raw'`). The first comparison
+        exposed the initial-width difference that led to Known issue 9 and the shift-invariant default.
+
+- [x] UI: taut string fit, extremes markers, iterations; residual view updates
+      → fit selector (taut string / constant), step drawing over cells, ▲▼ plateau marks, plateau note in
+        the crosshair tooltip; n = 20 000 Doppler recomputes and renders in ≈ 125 ms on the main thread
 
 ### M3 — LP regularizations
 - [ ] lp-build for minTV(0,1,2), minSup(1,2), combined; worker plumbing
