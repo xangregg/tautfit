@@ -25,3 +25,11 @@ test('step signs: monotone segment direction, 0 inside extreme plateaus', () => 
     assert.deepEqual(Array.from(stepSigns([2, 2, 2])), [0, 0]);
     assert.deepEqual(Array.from(stepSigns([3, 3, 1, 1])), [-1, -1, -1]);
 });
+
+test('step signs with split plateaus: up to the midpoint of a max, down after (reverse for a min)', () => {
+    const f = [0, 0, 3, 3, 3, 3, 1, 1, 1, 2];
+    // max plateau 2..5 (mid 3): steps 2→3 up, 3→4 and 4→5 down; min plateau 6..8 (mid 7): 6→7 down, 7→8 up
+    assert.deepEqual(Array.from(stepSigns(f, { plateaus: 'split' })), [1, 1, 1, -1, -1, -1, -1, 1, 1]);
+    assert.deepEqual(Array.from(stepSigns(f)), [1, 1, 0, 0, 0, -1, 0, 0, 1]);
+});
+

@@ -21,6 +21,16 @@ export function themeColors() {
 }
 
 /**
+ * Resolved value of one CSS custom property, e.g. cssColor('fit-taut').
+ *
+ * @param {string} name  without the leading --
+ * @returns {string}
+ */
+export function cssColor(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(`--${name}`).trim();
+}
+
+/**
  * Call `fn` when the OS color scheme changes.
  *
  * @param {function(): void} fn

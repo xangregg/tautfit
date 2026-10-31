@@ -58,3 +58,42 @@ export function primalByName(solution) {
         map.set(solution.names[i], solution.primal[i]);
     return map;
 }
+
+/**
+ * Name of a HiGHS model status code, e.g. 7 → 'optimal'.
+ *
+ * @param {{constants: {modelStatus: Record<string, number>}}} highs
+ * @param {number} code
+ * @returns {string}
+ */
+export function modelStatusName(highs, code) {
+    for (const [name, value] of Object.entries(highs.constants.modelStatus)) {
+        if (value === code)
+            return name;
+    }
+    return `status ${code}`;
+}
+
+/**
+ * Solve a model given as HiGHS ModelData (sparse arrays) with a loaded HiGHS instance. The native
+ * model is always disposed.
+ *
+ * @param {object} highs       instance from the HiGHS loader
+ * @param {object} model       ModelData: numCols, numRows, colCost, colLower, colUpper, rowLower,
+ *                             rowUpper, matrix {format, numRows, numCols, starts, indices, values}
+ * @param {object} [options]   HiGHS options; solver log output is off unless overridden
+ * @returns {{status: string, objective: number, x: Float64Array|null, ms: number}}  x = column
+ *     values (null unless optimal); ms = wall-clock time including model setup
+ */
+export function solveModel(highs, model, options = {}) {
+    const start = performance.now();
+    return highs.withModel(model, mdl => {
+        mdl.options.set({ output_flag: false, ...options });
+        mdl.run();
+        const code = mdl.getModelStatus();
+        const optimal = code === highs.constants.modelStatus.optimal;
+        const x = optimal ? Float64Array.from(mdl.getSolution().colValue) : null;
+        const objective = optimal ? mdl.getObjectiveValue() : NaN;
+        return { status: modelStatusName(highs, code), objective, x, ms: performance.now() - start };
+    });
+}

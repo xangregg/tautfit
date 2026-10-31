@@ -1,6 +1,7 @@
 // Control panel. Plain DOM; every change is reported as a partial state patch via onChange.
 
 import { SIGNALS } from '../core/signals.js';
+import { METHODS, METHOD_KEYS } from './methods.js';
 
 const DEBOUNCE = 200; // ms for typed numeric input
 const MAX_N = 20000; // simulated sample size cap
@@ -143,12 +144,28 @@ export function createControls(container, state, onChange) {
     sigmaFixed.addEventListener('change', sendSigmaFixed);
     sigmaFixedValue.addEventListener('input', sendSigmaFixed);
 
-    const method = el('select', {}, [
-        el('option', { value: 'taut', text: 'Taut string' }),
-        el('option', { value: 'constant', text: 'Constant' }),
-    ]);
+    const method = el('select', {}, METHOD_KEYS.map(key => el('option', { value: key, text: METHODS[key].label })));
     method.value = state.method;
+    const methodHint = el('span', { class: 'field-hint' });
     method.addEventListener('change', () => onChange({ method: method.value }));
+    const fixExtremes = el('input', { type: 'checkbox', checked: state.fixExtremes });
+    fixExtremes.addEventListener('change', () => onChange({ fixExtremes: fixExtremes.checked }));
+    const fixBox = el('label', { class: 'check' }, [fixExtremes, ' pin extremes to the taut string’s values (Fig. 2)']);
+
+    const overlayChecks = new Map();
+    const overlays = el('div', { class: 'overlays' });
+    for (const key of METHOD_KEYS) {
+        const box = el('input', { type: 'checkbox', checked: state.overlays.includes(key) });
+        box.addEventListener('change', () => {
+            const keys = METHOD_KEYS.filter(k => overlayChecks.get(k).box.checked);
+            onChange({ overlays: keys });
+        });
+        const swatch = el('span', { class: 'swatch' });
+        swatch.style.background = `var(--${METHODS[key].color})`;
+        const label = el('label', {}, [box, swatch, METHODS[key].name]);
+        overlayChecks.set(key, { box, label });
+        overlays.append(label);
+    }
 
     container.append(
         el('h2', { text: 'Data' }),
@@ -161,7 +178,10 @@ export function createControls(container, state, onChange) {
         el('label', { class: 'check' }, [sigmaFixed, ' fix σ instead of σ̂ (eq. 10)']),
         sigmaFixedValue,
         el('h2', { text: 'Fit' }),
-        field('method', method, 'taut string: fewest local extremes in Aₙ (§3.2)'),
+        el('label', { class: 'field' }, [el('span', { class: 'field-label', text: 'method' }), method, methodHint]),
+        fixBox,
+        el('span', { class: 'field-label', text: 'also show' }),
+        overlays,
     );
 
     let lastColumns = null;
@@ -178,6 +198,10 @@ export function createControls(container, state, onChange) {
         }
         xCol.value = String(st.xCol);
         yCol.value = String(st.yCol);
+        methodHint.textContent = METHODS[st.method].note;
+        fixBox.hidden = st.method !== 'combined';
+        for (const [key, { label }] of overlayChecks)
+            label.hidden = key === st.method;
     }
 
     return { sync };

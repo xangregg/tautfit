@@ -48,6 +48,7 @@ package.json            "type": "module", scripts below
 - Refresh vendored HiGHS: `npm run vendor:highs`.
 - Page check (server must be running): `npm run check:page -- http://localhost:8000/ --until '<js expr>'
   --eval '<js expr>' --screenshot out.png`. Exits 1 on any console error, exception, or failed load.
+- UI regression checks (server on port 8000): `npm run check:ui` (runs `tools/ui-checks.js` in the page).
 
 ## Conventions
 

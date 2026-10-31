@@ -88,23 +88,28 @@ export function localExtremes(f, relTol = DEFAULT_REL_TOL) {
 
 /**
  * Monotone sign pattern for the steps between consecutive observations: s[i] describes the step from
- * observation i to i + 1 (i = 0..n−2). It is the direction (+1 up, −1 down) of the monotone segment
- * of f containing the step, and 0 for steps inside a local extreme's plateau (left free). A constant f
- * gives all zeros.
+ * observation i to i + 1 (i = 0..n−2), +1 up, −1 down, 0 free. Steps outside extreme plateaus get the
+ * direction of the monotone segment containing them. Steps inside a local extreme's plateau are
+ * either left free (plateaus = 'free', PLAN.md §1.6 as first written) or split at the plateau's
+ * midpoint (plateaus = 'split': rising then falling for a max, the reverse for a min), which pins the
+ * extreme to the midpoint but guarantees a fit obeying the signs has no extra extremes inside the
+ * plateau. A constant f gives all zeros.
  *
  * @param {ArrayLike<number>} f
- * @param {number} [relTol=1e-9]
+ * @param {{relTol?: number, plateaus?: 'free'|'split'}} [opts]
  * @returns {Int8Array}  length max(0, n − 1)
  */
-export function stepSigns(f, relTol = DEFAULT_REL_TOL) {
+export function stepSigns(f, opts = {}) {
+    const relTol = opts.relTol ?? DEFAULT_REL_TOL;
+    const plateaus = opts.plateaus ?? 'free';
     const n = f.length;
     const s = new Int8Array(Math.max(0, n - 1));
     const { runs: rs, extremes } = localExtremes(f, relTol);
     if (rs.length < 2)
         return s;
-    const isExtreme = new Uint8Array(rs.length);
+    const extremeType = new Array(rs.length).fill(null);
     for (const e of extremes)
-        isExtreme[e.run] = 1;
+        extremeType[e.run] = e.type;
     // Direction of each run's monotone segment: the sign of the jump leaving it (or entering it, for
     // the last run). For a non-extreme interior run both agree.
     const dir = new Int8Array(rs.length);
@@ -113,11 +118,21 @@ export function stepSigns(f, relTol = DEFAULT_REL_TOL) {
         dir[r] = Math.sign(next);
     }
     for (let r = 0; r < rs.length; r++) {
-        const sign = isExtreme[r] ? 0 : dir[r];
-        for (let i = rs[r].start; i < rs[r].end; i++)
-            s[i] = sign;
+        const { start, end } = rs[r];
+        const type = extremeType[r];
+        if (!type) {
+            for (let i = start; i < end; i++)
+                s[i] = dir[r];
+        }
+        else if (plateaus === 'split') {
+            // steps start..mid−1 lead up to the midpoint observation, mid..end−1 lead away from it
+            const mid = Math.floor((start + end) / 2);
+            const toward = type === 'max' ? 1 : -1;
+            for (let i = start; i < end; i++)
+                s[i] = i < mid ? toward : -toward;
+        }
         if (r + 1 < rs.length)
-            s[rs[r].end] = Math.sign(rs[r + 1].value - rs[r].value);
+            s[end] = Math.sign(rs[r + 1].value - rs[r].value);
     }
     return s;
 }

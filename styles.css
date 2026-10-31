@@ -10,6 +10,11 @@
     --border: rgba(11, 11, 11, 0.10);
     --series-1: #2a78d6;
     --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --series-6: #008300;
+    --series-7: #6250d6;
     --highlight: rgba(42, 120, 214, 0.14);
     --violation: #d03b3b;
     --ok: #006300;
@@ -34,6 +39,11 @@
         --border: rgba(255, 255, 255, 0.10);
         --series-1: #3987e5;
         --series-2: #d95926;
+        --series-3: #199e70;
+        --series-4: #c98500;
+        --series-5: #d55181;
+        --series-6: #008300;
+        --series-7: #9085e9;
         --highlight: rgba(57, 135, 229, 0.20);
         --violation: #e66767;
         --ok: #0ca30c;
@@ -45,6 +55,19 @@
         --seq-4: #cde2fb;
         color-scheme: dark;
     }
+}
+
+/* One fixed color per fit method (primary or overlay), from the categorical slots; true f is series-2.
+   combined uses ink: series-8 red would be confused with the residual view's violation color. */
+:root {
+    --fit-taut: var(--series-1);
+    --fit-constant: var(--muted);
+    --fit-minTV0: var(--series-3);
+    --fit-minTV1: var(--series-7);
+    --fit-minTV2: var(--series-6);
+    --fit-minSup1: var(--series-5);
+    --fit-minSup2: var(--series-4);
+    --fit-combined: var(--ink);
 }
 
 * {
@@ -399,3 +422,30 @@ footer a {
 .error {
     color: var(--violation);
 }
+
+.pending {
+    opacity: 0.45;
+    transition: opacity 0.15s;
+}
+
+.overlays {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    margin-bottom: 0.5rem;
+}
+
+.overlays label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+}
+
+.overlays .swatch {
+    display: inline-block;
+    width: 14px;
+    height: 3px;
+    border-radius: 1px;
+}
+

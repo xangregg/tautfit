@@ -1,10 +1,10 @@
 // Main chart: data points (canvas, so n in the thousands stays fast), true signal and fit lines plus
 // axes (SVG on top), a crosshair tooltip, and an optional highlighted interval driven by the residual
-// view.
+// view. Several fits can be drawn; the primary one is thicker and its extremes are marked.
 
 import * as d3 from 'd3';
 import { MARGIN, xScale, cellIndex, sizeCanvas } from './layout.js';
-import { themeColors } from './theme.js';
+import { themeColors, cssColor } from './theme.js';
 import { showTooltip, hideTooltip } from './tooltip.js';
 
 const HEIGHT = 340; // px
@@ -12,6 +12,9 @@ const POINT_ALPHA = 0.55;
 const MARK_ROW = 9; // px above the x axis for extreme-plateau marks
 const MARK_SIZE = 42; // d3.symbol area, px²
 const MARK_INSET = 2; // px trimmed from each end of a plateau mark so adjacent plateaus stay distinct
+const MAX_MARKS = 100; // above this many extremes the marks are an unreadable band; the count is in the legend
+const PRIMARY_WIDTH = 2.5; // px
+const OVERLAY_WIDTH = 1.5; // px
 const fmt = d3.format('.4~g');
 
 /**
@@ -19,12 +22,20 @@ const fmt = d3.format('.4~g');
  * @property {Float64Array} x       sorted x
  * @property {Float64Array} y
  * @property {Float64Array|null} f  true signal at x (simulated data only)
- * @property {Float64Array} g       fit at x
- * @property {string} gLabel        legend/tooltip name of the fit
- * @property {boolean} gStep        draw g as a step function over the cells (piecewise-constant fits)
- * @property {{start: number, end: number}[]} gRuns  runs of equal g (for step drawing)
- * @property {{type: 'max'|'min', start: number, end: number}[]} extremes  local extremes of g
+ * @property {ChartFit[]} fits      fits to draw, primary last
+ * @property {{type: 'max'|'min', start: number, end: number}[]} extremes  local extremes of the primary
  * @property {Float64Array} edges   cell edges (layout.cellEdges)
+ */
+
+/**
+ * @typedef {object} ChartFit
+ * @property {string} key
+ * @property {string} label
+ * @property {Float64Array} g        fit at x
+ * @property {boolean} step          draw as a step function over the cells (piecewise-constant fits)
+ * @property {{start: number, end: number}[]} runs  runs of equal g (for step drawing)
+ * @property {string} colorVar       CSS custom property holding the color
+ * @property {boolean} primary
  */
 
 /**
@@ -61,7 +72,7 @@ export function createMainChart(container) {
         hideTooltip();
         const width = container.clientWidth;
         const colors = themeColors();
-        const { x, y, f, g, edges } = m;
+        const { x, y, f, edges } = m;
         const n = x.length;
         sx = xScale(edges, width);
         let lo = d3.min(y);
@@ -96,10 +107,10 @@ export function createMainChart(container) {
 
         const line = v => d3.line().x((_, i) => sx(x[i])).y((_, i) => sy(v[i]))(v);
         // A piecewise-constant fit is drawn over each observation's cell, so plateaus show their extent.
-        const steps = () => {
+        const steps = fit => {
             let d = '';
-            for (const r of m.gRuns) {
-                const yv = sy(g[r.start]);
+            for (const r of fit.runs) {
+                const yv = sy(fit.g[r.start]);
                 d += d ? `V${yv}` : `M${sx(edges[r.start])},${yv}`;
                 d += `H${sx(edges[r.end + 1])}`;
             }
@@ -108,7 +119,12 @@ export function createMainChart(container) {
         const series = [];
         if (f)
             series.push({ key: 'truth', label: 'true f', d: line(f), color: colors['series-2'], width: 1.5 });
-        series.push({ key: 'fit', label: m.gLabel, d: m.gStep ? steps() : line(g), color: colors['series-1'], width: 2 });
+        for (const fit of m.fits) {
+            series.push({
+                key: fit.key, label: fit.label, d: fit.step ? steps(fit) : line(fit.g),
+                color: cssColor(fit.colorVar), width: fit.primary ? PRIMARY_WIDTH : OVERLAY_WIDTH,
+            });
+        }
         gLines.selectAll('path').data(series, d => d.key).join('path')
             .attr('fill', 'none')
             .attr('stroke', d => d.color)
@@ -117,7 +133,8 @@ export function createMainChart(container) {
             .attr('d', d => d.d);
 
         const markY = HEIGHT - MARGIN.bottom - MARK_ROW;
-        const marks = gMarks.selectAll('g.mark').data(m.extremes).join(enter => {
+        const shown = m.extremes.length <= MAX_MARKS ? m.extremes : [];
+        const marks = gMarks.selectAll('g.mark').data(shown).join(enter => {
             const e = enter.append('g').attr('class', 'mark');
             e.append('line');
             e.append('path');
@@ -135,8 +152,10 @@ export function createMainChart(container) {
             .attr('fill', colors.ink);
 
         const items = [{ label: 'data', color: colors.muted, dot: true }, ...series];
-        if (m.extremes.length)
+        if (shown.length)
             items.push({ label: 'local max / min plateau', color: colors.ink, glyph: '▲▼' });
+        else if (m.extremes.length)
+            items.push({ label: `${m.extremes.length} local extremes (marks hidden)`, color: colors.ink, glyph: '▲▼' });
         legend.selectAll('span.item').data(items, d => d.label).join(enter => {
             const s = enter.append('span').attr('class', 'item');
             s.append('span').attr('class', 'key');
@@ -177,7 +196,8 @@ export function createMainChart(container) {
         const rows = [[fmt(model.y[i]), 'y', colors.muted]];
         if (model.f)
             rows.push([fmt(model.f[i]), 'true f', colors['series-2']]);
-        rows.push([fmt(model.g[i]), model.gLabel, colors['series-1']]);
+        for (const fit of [...model.fits].reverse())
+            rows.push([fmt(fit.g[i]), fit.label, cssColor(fit.colorVar)]);
         const ext = model.extremes.find(e => e.start <= i && i <= e.end);
         const note = ext
             ? `In a local ${ext.type === 'max' ? 'maximum' : 'minimum'} plateau: #${ext.start + 1}–${ext.end + 1}, `

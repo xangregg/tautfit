@@ -96,14 +96,17 @@ Discrete derivatives on t ∈ [0, 1] (rescale x to [0, 1]): with equal spacing �
 
 Problems (all subject to g ∈ Aₙ, §1.3):
 
-- `minTV(k)`, k = 0, 1, 2: minimize TV(g⁽ᵏ⁾) = Σ |Δ⁽ᵏ⁺¹⁾gᵢ| (eq. 44).
+- `minTV(k)`, k = 0, 1, 2: minimize TV(g⁽ᵏ⁾) = Σ |Δ⁽ᵏ⁺¹⁾gᵢ| (eq. 44). *(M3: implemented and reported as the
+  true total variation Σ|Δ⁽ᵏ⁾gᵢ − Δ⁽ᵏ⁾gᵢ₋₁| ≈ ∫|g⁽ᵏ⁺¹⁾|, which is eq. 44 divided by n; same minimizer, Known issue 10.)*
   LP: auxiliary uᵢ ≥ ±Δ⁽ᵏ⁺¹⁾gᵢ, minimize Σ uᵢ.
   k = 0 → piecewise constant (close to taut string); k = 1 → linear spline (its convex/concave intervals
   give the shape constraints for §1.7 bounds); k = 2 → smoother.
 - `minSup(k)`: minimize s subject to −s ≤ Δ⁽ᵏ⁾gᵢ ≤ s (eq. 46). k = 2 also gives K_min for §1.8.
 - `combined`: minTV(2) plus monotonicity sign constraints from the taut string (§4.2, Fig. 2):
   for each step i between consecutive observations, sᵢ ∈ {−1, 0, +1} = direction of the monotone segment
-  of f̃ containing that step; steps inside an extreme's plateau get 0 (unconstrained). Constraint
+  of f̃ containing that step; steps inside an extreme's plateau get 0 (unconstrained). *(M3: changed to split
+  each plateau at its midpoint, rising then falling for a max; with free plateau steps the fit wiggled inside
+  long plateaus, e.g. 33 extremes vs the taut string's 9 on Blocks. `stepSigns(f, {plateaus: 'split'})`.)* Constraint
   sᵢ·(gᵢ₊₁ − gᵢ) ≥ 0. Option (paper's Fig. 2): also fix g at the extreme to the taut string's value.
 
 LP solutions may be non-unique; HiGHS returns a vertex. That's acceptable; note it in the UI tooltip.
@@ -169,7 +172,8 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
 - Aₙ, σ̂, taut string, minTV(0) and the shape bounds use only the ordering: fine for any spacing.
 - Derivative-based methods use divided differences on rescaled x.
 - Ties in x: stable sort, keep rows. For derivative-based LPs add gᵢ = gᵢ₊₁ for tied x and skip
-  zero-width differences. For display, plot the fit's mean at each tied x.
+  zero-width differences. For display, plot the fit's mean at each tied x. *(M3: all LP fits use one variable per
+  distinct x, so tied observations share a value by construction.)*
 
 ---
 
@@ -198,6 +202,13 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
    and both fits in Aₙ. **Decision (M2): default to the range of the mean-centered sums**, which makes
    f(y + a) = f(y) + a (tested to 1e−9); the paper's version stays available as `initialWidth: 'raw'`
    and matches ftnonpar's pmreg to ≤ 4e−12.
+10. Eq. 44 defines TV(g⁽ᵏ⁾) = Σ|Δ⁽ᵏ⁺¹⁾g(i/n)| with Δ⁽¹⁾ = n(·), which is n × the total variation of the
+    k-th derivative (a Riemann sum for n∫|g⁽ᵏ⁺¹⁾| rather than ∫|g⁽ᵏ⁺¹⁾|). The minimizer is unchanged; we report
+    the true TV. Eq. 46 (sup norm) is scaled correctly.
+11. K_min for sin(4πt), σ = 0.2, n = 500 (paper: 117.7 for its draw). Ours over 40 seeds with the dyadic family:
+    median 104.2, range 97.5–109.7. Denser families raise it (10 seeds: dyadic 103.8, λ = 1.1 107.0, all
+    125 250 intervals 110.3) but stay below 117.7; the paper's family/σ̂ in Kovac's software may differ. All
+    below 16π² ≈ 157.9 as the theory requires.
 
 ---
 
@@ -230,13 +241,17 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
 - Protocol: `postMessage({id, lp, options})` → `{id, status, objective, names, primal: Float64Array, ms}` or
   `{id, error}`. `primal` is in HiGHS column order (order of first appearance in the LP text); `names`
   gives the matching column names. The UI side wraps this in a promise API in `src/ui/lp.js`.
-- LP-format gotchas: **variables default to [0, ∞)** — declare every gᵢ `free` in the Bounds section;
-  write each two-sided Aₙ constraint as two rows; wrap long constraint lines (< 255 chars per line) —
-  continuation lines are allowed.
-- Node tests import `highs` from node_modules and solve the same LP strings through `src/core/lp-solve.js`.
-- Option for M3: highs-js ≥ 1.15 also has a persistent model API that accepts sparse arrays
-  (`highs.createModel(...)`), avoiding LP-text generation/parsing for large n. Consider it if LP text
-  becomes a bottleneck.
+- `{id, task: 'regularize', spec}` → `{id, ...RegularizeResult}`: the worker builds and solves the model
+  itself (`src/core/regularize.js`), so only data and settings cross the thread boundary.
+- *Changed in M3:* regularization models are HiGHS `ModelData` (sparse CSR typed arrays, `highs.createModel`
+  via `withModel`), not CPLEX-LP text. Reasons: HiGHS's LP reader **rejects ranged rows** (`-1 <= x - y <= 1`)
+  and aborts the Wasm instance (the worker discards it after any error); typed arrays need no text
+  generation or parsing; `colValue` comes back in column order. LP text is kept for the smoke test, and
+  `model.exportModel('lp')` can dump any model for debugging.
+- Formulation: one column per distinct x (ties share a value), prefix-sum columns Pₖ so each Aₙ constraint is
+  one ranged row with 2 nonzeros (O(n) total instead of O(n log n)); derivatives w.r.t. τ = (m−1)·t so
+  coefficients are O(1) (in t units Dᵏ ~ mᵏ, ~10⁹ for TV(g″)); objectives converted to x units after.
+- Node tests import `highs` from node_modules and call the same `regularize()`.
 
 ### UI (`src/ui/`, D3 via import map)
 
@@ -304,11 +319,21 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         the crosshair tooltip; n = 20 000 Doppler recomputes and renders in ≈ 125 ms on the main thread
 
 ### M3 — LP regularizations
-- [ ] lp-build for minTV(0,1,2), minSup(1,2), combined; worker plumbing
-- [ ] Tests (Node + highs): solutions ∈ Aₙ; pure noise → minTV(0) objective ≈ 0 (constant); linear signal + noise →
+- [x] lp-build for minTV(0,1,2), minSup(1,2), combined; worker plumbing
+      → `derivatives.js` (divided differences, exact for polynomials at any spacing), `lp-build.js` (ModelData),
+        `regularize.js` (standardize, solve, map back, re-check Aₙ, recompute the objective from g)
+- [x] Tests (Node + highs): solutions ∈ Aₙ; pure noise → minTV(0) objective ≈ 0 (constant); linear signal + noise →
       minTV(1) objective ≈ 0 (a straight line); minSup(2) on sin(4πt), σ = 0.2, n = 500 gives K_min below 16π² ≈ 157.9
       in most seeds (paper reports 117.7 for its draw)
-- [ ] UI: method selector, overlay several fits
+      → all hold: minTV(1) ≈ 0 in 40/40 seeds; K_min < 16π² in 40/40 (median 104.2, Known issue 11). Also: LP
+        objective = objective recomputed from g; feasible-point bounds (minTV(0) ≤ TV(taut string), minSup(2) ≤
+        ‖f″‖∞ when f ∈ Aₙ); combined obeys the signs and never has more extremes than the taut string; pinned
+        extremes; ties; unequal spacing; x-rescaling and y-shift units.
+- [x] UI: method selector, overlay several fits
+      → 8 methods with a fixed color each, overlays, LP fits solved in the worker and cached, previous frame kept
+        dimmed while solving; n = 1024 solves in 27–104 ms in the browser. `npm run check:ui` checks that the
+        residual view and readouts agree on violations for every method (regression: LP optima on the boundary of
+        Aₙ were painted as violations).
 
 ### M4 — Fast bounds
 - [ ] bounds.js: monotone, piecewise monotone, convex (derived lower bound), piecewise convex, smoothness-K, K_min

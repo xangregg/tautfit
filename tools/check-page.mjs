@@ -7,12 +7,13 @@
 //                                 [--dark]
 //   --until       wait until this expression is truthy in the page (default: document load)
 //   --eval        print the value of this expression after waiting
+//   --eval-file   like --eval, reading the expression from a file
 //   --screenshot  save a PNG of the viewport
 //   --dark        emulate prefers-color-scheme: dark
 // Exit status 1 if any errors were seen or --until timed out.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -31,6 +32,8 @@ function parseArgs(argv) {
             opts.until = argv[++i];
         else if (arg === '--eval')
             opts.eval = argv[++i];
+        else if (arg === '--eval-file')
+            opts.eval = readFileSync(argv[++i], 'utf8');
         else if (arg === '--screenshot')
             opts.screenshot = argv[++i];
         else if (arg === '--dark')
@@ -176,10 +179,13 @@ async function main() {
             problems.push(`[timeout] --until not satisfied after ${TIMEOUT} ms: ${opts.until}`);
         await new Promise(r => setTimeout(r, SETTLE));
 
+        // Evaluate before printing so console output produced by the expression is reported too.
+        const evalResult = opts.eval ? await evaluate(opts.eval) : undefined;
+        await new Promise(r => setTimeout(r, SETTLE));
         for (const line of messages)
             console.log(line);
         if (opts.eval)
-            console.log(`eval: ${JSON.stringify(await evaluate(opts.eval))}`);
+            console.log(`eval: ${JSON.stringify(evalResult)}`);
         if (opts.screenshot) {
             const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, pageSession);
             writeFileSync(opts.screenshot, Buffer.from(data, 'base64'));

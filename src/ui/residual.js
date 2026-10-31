@@ -20,6 +20,8 @@ const byLo = d3.bisector(iv => iv.lo);
  * @property {{lo: number, hi: number, level: number}[][]} levels  rows (full partitions)
  * @property {Float64Array[]} w       w(I) per interval, per row
  * @property {Float64Array[]} ratios  |w(I)|/c per interval, per row
+ * @property {number} [limit=1]       ratio above which a cell is a violation; 1 + solver tolerance for
+ *                                    LP fits, whose active constraints sit on the boundary (ratio 1 ± ε)
  */
 
 /**
@@ -67,6 +69,7 @@ export function createResidualView(container, { onHover }) {
         const height = MARGIN.top + rows * ROW_H + MARGIN.bottom;
         const colors = themeColors();
         const color = ratioColor(colors);
+        const limit = m.limit ?? 1;
         sx = xScale(m.edges, width);
 
         plot.style('height', `${height}px`);
@@ -94,7 +97,7 @@ export function createResidualView(container, { onHover }) {
             for (let j = 0; j < level.length; j++) {
                 const x0 = sx(m.edges[level[j].lo]);
                 const x1 = sx(m.edges[level[j].hi + 1]);
-                ctx.fillStyle = ratios[j] > 1 ? colors.violation : color(ratios[j]);
+                ctx.fillStyle = ratios[j] > limit ? colors.violation : color(ratios[j]);
                 ctx.fillRect(x0, y0, x1 - x0, ROW_H - ROW_GAP);
             }
         }
@@ -103,7 +106,7 @@ export function createResidualView(container, { onHover }) {
             const level = m.levels[k];
             const ratios = m.ratios[k];
             for (let j = 0; j < level.length; j++) {
-                if (ratios[j] <= 1)
+                if (ratios[j] <= limit)
                     continue;
                 const x0 = sx(m.edges[level[j].lo]);
                 const x1 = sx(m.edges[level[j].hi + 1]);
@@ -161,7 +164,9 @@ export function createResidualView(container, { onHover }) {
         showTooltip(event.pageX, event.pageY, `${where}  (#${iv.lo + 1}–${iv.hi + 1}, |I| = ${len})`, [
             [fmtRatio(ratio), '|w(I)| / c'],
             [fmt(w), `w(I)${sign ? ` · ${sign}` : ''}`],
-        ], ratio > 1 ? 'Violation: this constraint of Aₙ fails' : undefined, true);
+        ], ratio > (model.limit ?? 1) ? 'Violation: this constraint of Aₙ fails'
+            : ratio >= 1 ? 'On the boundary of Aₙ (an active LP constraint, within solver tolerance)' : undefined,
+        ratio > (model.limit ?? 1));
         onHover(iv);
     });
     overlay.on('pointerleave', () => {

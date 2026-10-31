@@ -32,6 +32,25 @@ function getWorker() {
     return worker;
 }
 
+function request(message) {
+    const w = getWorker();
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        w.postMessage({ id, ...message });
+    });
+}
+
+/**
+ * Run a smoothness regularization (src/core/regularize.js) in the worker.
+ *
+ * @param {import('../core/regularize.js').RegularizeSpec} spec  without the HiGHS instance
+ * @returns {Promise<import('../core/regularize.js').RegularizeResult>}
+ */
+export function regularizeInWorker(spec) {
+    return request({ task: 'regularize', spec });
+}
+
 /**
  * Solve an LP in the worker.
  *
@@ -40,10 +59,5 @@ function getWorker() {
  * @returns {Promise<{status: string, objective: number, names: string[], primal: Float64Array, ms: number}>}
  */
 export function solveLP(lp, options = {}) {
-    const w = getWorker();
-    const id = nextId++;
-    return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        w.postMessage({ id, lp, options });
-    });
+    return request({ lp, options });
 }
