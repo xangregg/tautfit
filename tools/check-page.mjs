@@ -4,9 +4,11 @@
 // (Node 22+).
 //
 // Usage: node tools/check-page.mjs [url] [--until <js expr>] [--eval <js expr>] [--screenshot file.png]
+//                                 [--dark]
 //   --until       wait until this expression is truthy in the page (default: document load)
 //   --eval        print the value of this expression after waiting
 //   --screenshot  save a PNG of the viewport
+//   --dark        emulate prefers-color-scheme: dark
 // Exit status 1 if any errors were seen or --until timed out.
 
 import { spawn } from 'node:child_process';
@@ -31,6 +33,8 @@ function parseArgs(argv) {
             opts.eval = argv[++i];
         else if (arg === '--screenshot')
             opts.screenshot = argv[++i];
+        else if (arg === '--dark')
+            opts.dark = true;
         else
             opts.url = arg;
     }
@@ -144,6 +148,10 @@ async function main() {
         await cdp.send('Log.enable', {}, pageSession);
         await cdp.send('Emulation.setDeviceMetricsOverride',
             { ...VIEWPORT, deviceScaleFactor: 1, mobile: false }, pageSession);
+        if (opts.dark) {
+            await cdp.send('Emulation.setEmulatedMedia',
+                { features: [{ name: 'prefers-color-scheme', value: 'dark' }] }, pageSession);
+        }
         await cdp.send('Target.setAutoAttach',
             { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, pageSession);
         await cdp.send('Page.navigate', { url: opts.url }, pageSession);

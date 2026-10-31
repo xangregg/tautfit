@@ -183,6 +183,8 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
 6. Coverage subtlety: the fast bounds use windows such as {i−k..i} and symmetric windows that are not in
    the dyadic family, so their honesty rests on Aₙ with *all* intervals (for which τ = 3 is still ≥ the
    asymptotic value 2). Verify coverage by simulation (§4, M4) rather than assuming it.
+7. Appendix 7.3 says the dyadic family "consists of at most n subsets"; with all levels it has up to ≈ 2n
+   (n singletons + n/2 pairs + …). Harmless; noted so test bounds use 2n + log₂n.
 
 ---
 
@@ -254,11 +256,15 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
       (page and workers), with `--until`, `--eval`, `--screenshot`
 
 ### M1 — Data, σ̂, Aₙ, residual view
-- [ ] rng, signals, data, prefix, sigma, intervals, region (+ tests)
-- [ ] Tests: σ̂ ≈ σ on pure noise (n = 10⁴, within 3%); `multiresolution(n, 2)` covers every index at every level,
+- [x] rng, signals, data, prefix, sigma, intervals, region (+ tests)
+- [x] Tests: σ̂ ≈ σ on pure noise (n = 10⁴, within 3%); `multiresolution(n, 2)` covers every index at every level,
       contains all singletons, count O(n); g = y is always in Aₙ; a constant g = mean(y) passes on pure noise for ≥ ~95%
       of seeds (n = 500, τ = 3)
-- [ ] UI: dataset picker, chart of points, residual view for g = constant mean, readouts
+      → σ̂ at n = 10⁴ has relative sd ≈ 1.4%, so a single draw is within 3% only ≈ 97% of the time; the test checks the
+        mean over 50 seeds (within 0.5%) and ≥ 90% of seeds within 3%. Constant-in-Aₙ rate observed: 98.0% of 400 seeds.
+- [x] UI: dataset picker, chart of points, residual view for g = constant mean, readouts
+      → also CSV paste/drop/file with column pickers, τ, λ, σ override; residual-cell hover highlights the interval
+        on the main chart
 
 ### M2 — Taut string
 - [ ] O(n) taut string; reference solver; KKT checker
