@@ -59,7 +59,8 @@ export function exactBoundsInWorker(spec, onProgress) {
 /**
  * Monte Carlo sample of the multiscale statistic (src/core/calibrate.js) in the worker.
  *
- * @param {{n: number, lambda: number, family: 'chosen'|'all', B: number, seed: number, plugSigma: boolean}} spec
+ * @param {{n: number, lambda: number, family: 'chosen'|'all', B: number, seed: number,
+ *     sigmaEstimator: 'diff'|'gsjs'|'none', x?: Float64Array}} spec
  * @param {function(number): void} [onProgress]
  * @returns {Promise<{sorted: Float64Array}>}
  */

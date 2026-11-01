@@ -169,6 +169,12 @@ export function createControls(container, state, onChange) {
         else if (Number.isFinite(v) && v > 0)
             later({ sigmaFixed: v });
     };
+    const sigmaMethod = el('select', {}, [
+        el('option', { value: 'diff', text: 'first differences (eq. 10)' }),
+        el('option', { value: 'gsjs', text: 'local linear residuals (GSJS), trend-robust' }),
+    ]);
+    sigmaMethod.value = state.sigmaMethod;
+    sigmaMethod.addEventListener('change', () => onChange({ sigmaMethod: sigmaMethod.value }));
     sigmaFixed.addEventListener('change', sendSigmaFixed);
     sigmaFixedValue.addEventListener('input', sendSigmaFixed);
 
@@ -230,7 +236,8 @@ export function createControls(container, state, onChange) {
         calBox,
         tauValue,
         field('λ', lambdaInput, 'interval family scale; 2 = dyadic'),
-        el('label', { class: 'check' }, [sigmaFixed, ' fix σ instead of σ̂ (eq. 10)']),
+        field('σ estimate', sigmaMethod, 'GSJS: a locally linear trend cancels; eq. 10 is the paper’s default'),
+        el('label', { class: 'check' }, [sigmaFixed, ' fix σ instead of estimating it']),
         sigmaFixedValue,
         field('Aₙ boxes on the chart', boxes, 'each box: where the fit’s mean over its x-span must lie (eq. 7)'),
         el('h2', { text: 'Fit' }),

@@ -17,6 +17,15 @@ Data: pairs (xᵢ, yᵢ), i = 1..n, sorted by x. The paper assumes xᵢ = i/n; s
 Φ⁻¹(0.75)·√2 = 0.9538725524… (hard-code with a comment). Positively biased under signal, which only makes
 Aₙ more conservative. Allow a user override of σ.
 
+*Added after M5:* optional trend-robust estimate `sigmaGSJS` (Gasser, Sroka & Jennen-Steinmetz 1986, median
+form): pseudo-residuals eᵢ = aᵢy_{i−1} + bᵢy_{i+1} − yᵢ against the line through the neighbors, scaled by
+1/√(aᵢ² + bᵢ² + 1); a locally linear trend cancels exactly at any spacing. Motivation: on small, steep data the
+inflation is not just conservative but makes Aₙ useless (user example, n = 10: eq. 10 gives 1.05, GSJS 0.12,
+c = 2.75 vs 0.32 with y spanning 7). eq. 10 stays the default (on the built-in signals the two agree within ~10%).
+Readout warnings: n < 50; σ̂(eq. 10)/σ̂(GSJS) > 1 + 4/√n (≈ 1% false alarms at n = 10, ≈ 0.1% for n ≥ 100 under
+pure noise). Calibration plugs in the estimator actually used (none when σ is fixed). At n = 10 with GSJS σ̂ the
+calibrated τ is 8.7, i.e. τ = 3 covers only 76%.
+
 ### 1.2 Interval family 𝓘ₙ (eq. 9, appendix 7.3)
 
 Multiresolution scheme with parameter λ > 1 (default λ = 2 → dyadic blocks). Using 1-based indices,

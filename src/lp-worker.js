@@ -6,7 +6,8 @@
 //   {id, task: 'regularize', spec}  → {id, ...RegularizeResult}   (see src/core/regularize.js)
 //   {id, task: 'exactBounds', spec} → {id, progress} … then {id, status, lb, ub, solves, ms}
 //   {id, task: 'calibrate', spec}   → {id, progress} … then {id, sorted: Float64Array}
-//                                     spec: {n, lambda, family: 'chosen'|'all', B, seed, plugSigma}
+//                                     spec: {n, lambda, family: 'chosen'|'all', B, seed,
+//                                            sigmaEstimator: 'diff'|'gsjs'|'none', x (for 'gsjs')}
 //   failures                        → {id, error}
 //
 // highs.mjs locates highs.wasm next to itself via import.meta.url, so no locateFile is needed.
@@ -15,7 +16,7 @@ import loadHighs from '../vendor/highs/highs.mjs';
 import { solveLP } from './core/lp-solve.js';
 import { regularize } from './core/regularize.js';
 import { exactBounds } from './core/exact.js';
-import { simulateMaxStatistics } from './core/calibrate.js';
+import { simulateMaxStatistics, sigmaPlugIn } from './core/calibrate.js';
 import { multiresolution, allIntervals } from './core/intervals.js';
 
 const PROGRESS_INTERVAL = 100; // ms between progress messages
@@ -54,7 +55,8 @@ self.addEventListener('message', async event => {
         else if (task === 'calibrate') {
             const intervals = spec.family === 'all' ? allIntervals(spec.n) : multiresolution(spec.n, spec.lambda);
             const sorted = simulateMaxStatistics(spec.n, intervals,
-                { B: spec.B, seed: spec.seed, plugSigma: spec.plugSigma, onProgress: progressReporter(id) });
+                { B: spec.B, seed: spec.seed, plugSigma: sigmaPlugIn(spec.sigmaEstimator, spec.x),
+                    onProgress: progressReporter(id) });
             self.postMessage({ id, sorted }, [sorted.buffer]);
         }
         else {

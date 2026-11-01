@@ -3,7 +3,7 @@
 // optionally M' = M / σ̂(Z) to account for estimating σ with eq. (10), as the procedure does.
 
 import { createRng } from './rng.js';
-import { sigmaMAD } from './sigma.js';
+import { sigmaMAD, sigmaGSJS } from './sigma.js';
 
 const Z_95 = 1.959963984540054; // standard normal 0.975 quantile, for the Monte Carlo interval
 
@@ -12,7 +12,8 @@ const Z_95 = 1.959963984540054; // standard normal 0.975 quantile, for the Monte
  *
  * @param {ArrayLike<number>} z
  * @param {{lo: number, hi: number}[]} intervals
- * @param {boolean} [plugSigma=true]  divide by σ̂(z) (eq. 10)
+ * @param {boolean|function(ArrayLike<number>): number} [plugSigma=true]  divide by σ̂(z): true = eq. (10),
+ *     a function = that estimator, false = σ known
  * @returns {number}
  */
 export function maxStatistic(z, intervals, plugSigma = true) {
@@ -23,6 +24,8 @@ export function maxStatistic(z, intervals, plugSigma = true) {
     let max = 0;
     for (const { lo, hi } of intervals)
         max = Math.max(max, Math.abs(S[hi + 1] - S[lo]) / Math.sqrt(hi - lo + 1));
+    if (typeof plugSigma === 'function')
+        return max / plugSigma(z);
     return plugSigma ? max / sigmaMAD(z) : max;
 }
 
@@ -31,7 +34,8 @@ export function maxStatistic(z, intervals, plugSigma = true) {
  *
  * @param {number} n
  * @param {{lo: number, hi: number}[]} intervals
- * @param {{B?: number, seed?: number, plugSigma?: boolean, onProgress?: function(number): void}} [opts]
+ * @param {{B?: number, seed?: number, plugSigma?: boolean|function, onProgress?: function(number): void}} [opts]
+ *     plugSigma as in maxStatistic
  * @returns {Float64Array}  sorted, length B
  */
 export function simulateMaxStatistics(n, intervals, opts = {}) {
@@ -97,3 +101,17 @@ export function coverageOfTau(sorted, tau, n) {
     }
     return lo / sorted.length;
 }
+
+/**
+ * The σ̂ plug-in for calibration matching the procedure's own estimator.
+ *
+ * @param {'diff'|'gsjs'|'none'} kind  eq. (10), GSJS on the design x, or σ known
+ * @param {ArrayLike<number>} [x]      design points (needed for 'gsjs')
+ * @returns {boolean|function(ArrayLike<number>): number}
+ */
+export function sigmaPlugIn(kind, x) {
+    if (kind === 'gsjs')
+        return z => sigmaGSJS(x, z);
+    return kind === 'diff';
+}
+

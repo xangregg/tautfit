@@ -8,7 +8,7 @@
 import * as d3 from 'd3';
 import { SIGNALS, simulate } from '../core/signals.js';
 import { parseTable, prepareXY, rowIndex } from '../core/data.js';
-import { sigmaMAD } from '../core/sigma.js';
+import { sigmaMAD, sigmaGSJS } from '../core/sigma.js';
 import { multiresolution, multiresolutionLevels } from '../core/intervals.js';
 import { threshold, checkRegion, constraintBoxes } from '../core/region.js';
 import { tautStringRegression } from '../core/tautstring.js';
@@ -35,6 +35,10 @@ const CALIBRATION_B = 2000; // Monte Carlo replicates for τ
 const CALIBRATION_SEED = 1; // fixed so a calibrated τ is reproducible
 const CALIBRATE_ALL_MAX_N = 2000; // all-intervals calibration costs O(n²) per replicate
 const EXACT_MAX_N = 300; // exact LP bounds: 2n LPs
+const SMALL_N = 50; // below this, warn that σ̂ and τ = 3 are rough (the paper targets n ≥ 500)
+// Warn when σ̂(eq. 10)/σ̂(GSJS) exceeds 1 + INFLATION_K/√n. Under pure noise (4000 runs per n, half
+// unequal spacing) this fires in ≈ 1% of runs at n = 10 and ≈ 0.1% for n ≥ 100.
+const INFLATION_K = 4;
 
 const state = {
     source: 'blocks',
@@ -48,6 +52,7 @@ const state = {
     tau: 3,
     lambda: 2,
     sigmaFixed: null, // number to override σ̂
+    sigmaMethod: 'diff', // σ̂ estimator: 'diff' (eq. 10) | 'gsjs' (trend-robust local linear residuals)
     method: 'taut', // key of METHODS
     overlays: [], // keys of METHODS drawn in addition to the primary fit
     fixExtremes: false, // combined: pin extremes to the taut string's values
@@ -134,7 +139,16 @@ function deriveBase(st, data, tauInfo) {
     const { columns, notes, x, y, f, n, dataKey, equallySpaced } = data;
     const tau = tauInfo.tau;
     const sigmaHat = sigmaMAD(y);
-    const sigmaUsed = st.sigmaFixed ?? sigmaHat;
+    let sigmaRobust = NaN;
+    try {
+        sigmaRobust = sigmaGSJS(x, y);
+    }
+    catch {
+        // fewer than 3 usable points: GSJS unavailable
+    }
+    const useRobust = st.sigmaMethod === 'gsjs' && Number.isFinite(sigmaRobust);
+    const sigmaUsed = st.sigmaFixed ?? (useRobust ? sigmaRobust : sigmaHat);
+    const warnings = sigmaWarnings(st, n, sigmaHat, sigmaRobust, useRobust);
     const c = threshold(sigmaUsed, tau, n);
     const family = multiresolution(n, st.lambda);
     const levels = multiresolutionLevels(n, st.lambda);
@@ -146,9 +160,32 @@ function deriveBase(st, data, tauInfo) {
     // K_min costs O(n·|grid|²); only the smoothness band needs it.
     const kMin = equallySpaced && st.band === 'smooth' ? smoothnessKMin(y, c, h, { theta: st.theta }) : null;
     return {
-        columns, notes, x, y, f, n, sigmaHat, sigmaUsed, tau, tauInfo, c, family, levels, taut, tautExt, regionKey,
+        columns, notes, warnings, x, y, f, n, sigmaHat, sigmaRobust, useRobust, sigmaUsed, tau, tauInfo, c, family, levels, taut, tautExt, regionKey,
         equallySpaced, h, kMin, edges: cellEdges(x),
     };
+}
+
+/**
+ * Warnings about the noise scale, which sets c and hence how loose Aₙ is.
+ */
+function sigmaWarnings(st, n, sigmaHat, sigmaRobust, useRobust) {
+    const out = [];
+    if (n < SMALL_N) {
+        const source = st.sigmaFixed !== null ? 'σ is fixed'
+            : useRobust ? `GSJS σ̂ comes from only ${n - 2} pseudo-residuals`
+                : `σ̂ comes from only ${n - 1} differences`;
+        out.push(`Small n (${n}): ${source}, and τ = 3 targets n ≥ 500; at small n it can cover far less than 95% `
+            + '(e.g. 76% at n = 10 with GSJS σ̂). Calibrate τ for this n, and fix σ if you know the noise level.');
+    }
+    if (st.sigmaFixed === null && !useRobust && Number.isFinite(sigmaRobust) && sigmaRobust > 0) {
+        const ratio = sigmaHat / sigmaRobust;
+        if (ratio > 1 + INFLATION_K / Math.sqrt(n)) {
+            out.push(`σ̂ (eq. 10) = ${fmt(sigmaHat)} is ${fmt(ratio)}× the trend-robust estimate ${fmt(sigmaRobust)}: `
+                + 'differences between neighbors seem to contain signal, which inflates σ̂ and widens Aₙ '
+                + '(c ∝ σ). Consider the GSJS σ estimate, or fix σ.');
+        }
+    }
+    return out;
 }
 
 /** Attach extremes and the Aₙ checks (family and residual-view rows) to a fit, once. */
@@ -280,8 +317,10 @@ function tauRow(base, st) {
     if (t.mode === 'fixed')
         return ['τ', fmt(t.tau), undefined];
     const family = st.calibFamily === 'all' ? 'all intervals' : `λ = ${fmt(st.lambda)} family`;
+    const plug = st.sigmaFixed !== null || !st.plugSigma ? ' with σ known'
+        : st.sigmaMethod === 'gsjs' ? ' with GSJS σ̂' : ' with σ̂ (eq. 10)';
     return ['τ (calibrated)', fmt(t.tau),
-        `Monte Carlo τₙ(${st.alpha}) for ${family}${st.plugSigma ? ' with σ̂' : ''}, B = ${CALIBRATION_B}; `
+        `Monte Carlo τₙ(${st.alpha}) for ${family}${plug}, B = ${CALIBRATION_B}; `
         + `95% MC interval ${fmt(t.tauLo)}–${fmt(t.tauHi)}; τ = 3 would cover ${fmt(100 * t.cov3)}%`];
 }
 
@@ -289,7 +328,12 @@ function readoutRows(base, fit, st) {
     const rows = [];
     const add = (label, value, title) => rows.push({ label, value, title });
     add('n', fmtInt(base.n));
-    add('σ̂ (eq. 10)', fmt(base.sigmaHat), 'median |Δy| / (Φ⁻¹(0.75)·√2)');
+    const inUse = which => (st.sigmaFixed === null && which ? ' · used' : '');
+    add('σ̂ (eq. 10)', fmt(base.sigmaHat), `median |Δy| / (Φ⁻¹(0.75)·√2)${inUse(!base.useRobust)}`);
+    if (Number.isFinite(base.sigmaRobust)) {
+        add('σ̂ (GSJS)', fmt(base.sigmaRobust),
+            `median local linear residual, trend-robust (Gasser et al. 1986)${inUse(base.useRobust)}`);
+    }
     if (base.f)
         add('true σ', fmt(st.sigma));
     if (st.sigmaFixed !== null)
@@ -358,6 +402,8 @@ function renderReadouts(container, base, fit, st, band, exact) {
     const verdict = sel.append('p').attr('class', `verdict ${fit.check.ok ? 'ok' : 'bad'}`);
     verdict.append('strong').text(`${METHODS[fit.key].name} ${fit.check.ok ? '∈' : '∉'} Aₙ`);
     verdict.append('span').text(verdictText(base, fit));
+    for (const w of base.warnings)
+        sel.append('p').attr('class', 'warning').text(w);
     const dl = sel.append('dl');
     for (const r of readoutRows(base, fit, st)) {
         dl.append('dt').text(r.label);
@@ -448,9 +494,19 @@ function startup() {
         return jobs.join(' · ');
     }
 
-    function calibKey(n) {
+    // σ̂ plug-in that matches the procedure: none when σ is fixed (known), else the chosen estimator.
+    function calibEstimator() {
+        if (state.sigmaFixed !== null || !state.plugSigma)
+            return 'none';
+        return state.sigmaMethod;
+    }
+
+    function calibKey(data) {
         const fam = state.calibFamily === 'all' ? 'all' : `λ${state.lambda}`;
-        return `${n}|${fam}|${state.plugSigma}|${CALIBRATION_B}|${CALIBRATION_SEED}`;
+        const est = calibEstimator();
+        // GSJS depends on the design x, so its calibration is specific to the data's x
+        const design = est === 'gsjs' ? `|${data.dataKey}` : '';
+        return `${data.n}|${fam}|${est}${design}|${CALIBRATION_B}|${CALIBRATION_SEED}`;
     }
 
     // τ for this data: fixed, or calibrated from a cached Monte Carlo sample (started on demand).
@@ -459,7 +515,7 @@ function startup() {
             return { tau: state.tau, mode: 'fixed' };
         if (state.calibFamily === 'all' && data.n > CALIBRATE_ALL_MAX_N)
             return { error: `All-interval calibration is limited to n ≤ ${CALIBRATE_ALL_MAX_N} (O(n²) per replicate).` };
-        const key = calibKey(data.n);
+        const key = calibKey(data);
         const sorted = calibCache.get(key);
         if (sorted) {
             const t = tauFromSample(sorted, state.alpha, data.n);
@@ -469,7 +525,7 @@ function startup() {
             progress.set(key, { label: 'Calibrating τ', fraction: 0 });
             calibrateInWorker({
                 n: data.n, lambda: state.lambda, family: state.calibFamily, B: CALIBRATION_B,
-                seed: CALIBRATION_SEED, plugSigma: state.plugSigma,
+                seed: CALIBRATION_SEED, sigmaEstimator: calibEstimator(), x: data.x,
             }, fr => {
                 progress.get(key).fraction = fr;
                 status.text(showProgress());

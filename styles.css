@@ -487,3 +487,16 @@ footer a {
     margin-bottom: 0.4rem;
 }
 
+/* a status warning: icon + text, never color alone */
+.warning {
+    margin: 0 0 0.6rem;
+    padding: 0.35rem 0.5rem 0.35rem 0.6rem;
+    border-left: 3px solid #fab219;
+    background: rgba(250, 178, 25, 0.10);
+    font-size: 0.8rem;
+}
+
+.warning::before {
+    content: '⚠ ';
+}
+
