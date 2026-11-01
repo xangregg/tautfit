@@ -22,6 +22,8 @@ import { regularizeInWorker, exactBoundsInWorker, calibrateInWorker } from './lp
 import { tauFromSample, coverageOfTau } from '../core/calibrate.js';
 import { METHODS } from './methods.js';
 import { BANDS } from './bands.js';
+import { stateToHash, hashToState } from './urlstate.js';
+import { toCsv, exportColumns } from './export.js';
 import {
     monotoneBounds, piecewiseMonotoneBounds, convexBounds, piecewiseConvexBounds, curvatureSegments,
     smoothnessBounds, smoothnessKMin, crossings,
@@ -39,6 +41,8 @@ const SMALL_N = 50; // below this, warn that σ̂ and τ = 3 are rough (the pape
 // Warn when σ̂(eq. 10)/σ̂(GSJS) exceeds 1 + INFLATION_K/√n. Under pure noise (4000 runs per n, half
 // unequal spacing) this fires in ≈ 1% of runs at n = 10 and ≈ 0.1% for n ≥ 100.
 const INFLATION_K = 4;
+const HASH_DEBOUNCE = 250; // ms between URL hash updates while settings change
+const MESSAGE_MS = 6000; // how long toolbar messages stay up
 
 const state = {
     source: 'blocks',
@@ -66,6 +70,7 @@ const state = {
     exact: false, // also compute exact LP bounds for the band (n ≤ EXACT_MAX_N)
     boxes: 'hover', // Aₙ boxes on the chart: 'off' | 'hover' | 'level:k' | 'all'
 };
+const DEFAULTS = structuredClone(state); // what an empty URL hash means
 
 let tableCache = { text: null, table: null };
 
@@ -411,7 +416,7 @@ function verdictText(base, fit) {
     return `: the smallest ${fit.lp.objectiveLabel} of any function in Aₙ is ${fmt(fit.lp.objective)}; ${extremes}.`;
 }
 
-function renderReadouts(container, base, fit, st, band, exact) {
+function renderReadouts(container, base, fit, st, band, exact, extraNotes) {
     const sel = d3.select(container);
     sel.selectAll('*').remove();
     sel.append('h2').text('Readouts');
@@ -437,10 +442,13 @@ function renderReadouts(container, base, fit, st, band, exact) {
                 bdl.append('dd').attr('class', 'dd-note').text(r.title);
         }
     }
-    sel.append('ul').attr('class', 'notes').selectAll('li').data(base.notes).join('li').text(d => d);
+    sel.append('ul').attr('class', 'notes').selectAll('li').data([...base.notes, ...extraNotes]).join('li').text(d => d);
 }
 
-function startup() {
+async function startup() {
+    const loaded = await hashToState(location.hash, DEFAULTS);
+    Object.assign(state, loaded.state);
+    let linkNote = rejectedNote(loaded.rejected);
     const status = d3.select('#status');
     const chart = createMainChart(document.getElementById('main-chart'));
     const residualEl = document.getElementById('residual-view');
@@ -607,7 +615,7 @@ function startup() {
         const drawPrimary = primary ?? getFit('taut');
         shown = { primary: drawPrimary, overlays, band: bandPending ? null : band, exact: exactPending ? null : exact };
         draw();
-        renderReadouts(readouts, base, drawPrimary, state, shown.band, shown.exact);
+        renderReadouts(readouts, base, drawPrimary, state, shown.band, shown.exact, linkNote ? [linkNote] : []);
     }
 
     // Aₙ constraint boxes of the primary fit for one level, computed once per fit and level.
@@ -677,6 +685,7 @@ function startup() {
     }
 
     function update() {
+        scheduleHash();
         let data;
         try {
             data = deriveData(state);
@@ -721,14 +730,104 @@ function startup() {
         render();
     }
 
-    const controls = createControls(document.getElementById('controls'), state, patch => {
+    const controlsEl = document.getElementById('controls');
+    const onChange = patch => {
+        linkNote = null;
         Object.assign(state, patch);
         update();
+    };
+    let controls = createControls(controlsEl, state, onChange);
+
+    // --- URL hash: written (debounced, replaceState so Back is not flooded) after every change; read on
+    // load and when the user edits or follows a link to this page.
+    let hashTimer = null;
+    let writtenHash = location.hash;
+    let dataOmitted = 0;
+    let hashSeq = 0;
+    async function writeHash() {
+        clearTimeout(hashTimer);
+        hashTimer = null;
+        const seq = ++hashSeq;
+        const result = await stateToHash(state, DEFAULTS);
+        if (seq !== hashSeq)
+            return; // a newer write started meanwhile
+        dataOmitted = result.dataOmitted;
+        if (result.hash !== writtenHash) {
+            writtenHash = result.hash;
+            history.replaceState(null, '', result.hash || location.pathname + location.search);
+        }
+    }
+    function scheduleHash() {
+        clearTimeout(hashTimer);
+        hashTimer = setTimeout(writeHash, HASH_DEBOUNCE);
+    }
+    window.addEventListener('hashchange', async () => {
+        if (location.hash === writtenHash)
+            return;
+        const next = await hashToState(location.hash, DEFAULTS);
+        writtenHash = location.hash;
+        linkNote = rejectedNote(next.rejected);
+        Object.assign(state, next.state);
+        controlsEl.replaceChildren();
+        controls = createControls(controlsEl, state, onChange);
+        update();
     });
+
+    // --- toolbar
+    const message = document.getElementById('toolbar-message');
+    let messageTimer = null;
+    function say(text) {
+        message.textContent = text;
+        clearTimeout(messageTimer);
+        messageTimer = setTimeout(() => {
+            message.textContent = '';
+        }, MESSAGE_MS);
+    }
+    document.getElementById('copy-link').addEventListener('click', async () => {
+        await writeHash();
+        const omitted = dataOmitted
+            ? ` without your data (${fmt(dataOmitted / 1024)} KB is too long for a link; paste it again after opening)` : '';
+        try {
+            await navigator.clipboard.writeText(location.href);
+            say(`Link copied${omitted}.`);
+        }
+        catch {
+            say(`Copy the address bar to share this view${omitted}.`);
+        }
+    });
+    const downloadButton = document.getElementById('download-csv');
+    downloadButton.addEventListener('click', () => {
+        if (!shown || !base || base.error || charts.classList.contains('pending')) {
+            say('Nothing to export until the current fit is ready.');
+            return;
+        }
+        const { primary, overlays, band, exact } = shown;
+        const names = state.source === 'user'
+            ? { x: state.xCol < 0 ? 'row' : base.columns[state.xCol], y: base.columns[state.yCol] } : {};
+        const csv = toCsv(exportColumns({
+            x: base.x, y: base.y, f: base.f, names,
+            fits: [primary, ...overlays].map(fit => ({ key: fit.key, g: fit.g })),
+            band: band ? { key: state.band, lb: band.lb, ub: band.ub } : null,
+            exact: exact?.lb ? exact : null,
+        }));
+        const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `tautfit-${state.source}-${state.method}.csv`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+        say(`Saved ${a.download} (${fmtInt(base.n)} rows).`);
+    });
+    const about = document.getElementById('about');
+    document.getElementById('about-open').addEventListener('click', () => about.showModal());
 
     new ResizeObserver(() => draw()).observe(charts);
     onThemeChange(draw);
     update();
+}
+
+function rejectedNote(rejected) {
+    return rejected.length ? `Ignored invalid link setting(s): ${rejected.join(', ')}.` : null;
 }
 
 startup();

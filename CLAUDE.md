@@ -2,7 +2,7 @@
 
 ## Project
 
-A browser app (served from GitHub Pages) implementing the nonparametric regression methods of
+**tautfit**: a browser app (served from GitHub Pages) implementing the nonparametric regression methods of
 Davies, Kovac & Meise (2009), "Nonparametric regression, confidence regions and regularization",
 Annals of Statistics 37(5B):2597–2625 (arXiv:0711.0690). The central object is the multiresolution
 confidence region Aₙ; fits are the *simplest* functions inside it (fewest local extremes, minimal

@@ -86,9 +86,97 @@ body {
     font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
+header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: start;
+    gap: 0 1rem;
+}
+
 header h1 {
     margin: 0;
     font-size: 1.4rem;
+}
+
+.toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+}
+
+#toolbar-message {
+    color: var(--ink-2);
+    font-size: 0.8rem;
+}
+
+button {
+    font: inherit;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--axis);
+    border-radius: 6px;
+    padding: 0.2rem 0.6rem;
+    cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+    background: var(--highlight);
+}
+
+button:disabled {
+    color: var(--muted);
+    cursor: default;
+}
+
+/* --- about dialog */
+#about {
+    max-width: min(44rem, calc(100vw - 2rem));
+    max-height: calc(100vh - 2rem);
+    padding: 1rem 1.5rem 1.25rem;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+#about::backdrop {
+    background: rgba(0, 0, 0, 0.35);
+}
+
+#about h3 {
+    margin: 1rem 0 0.3rem;
+    font-size: 0.9rem;
+}
+
+#about p,
+#about li {
+    color: var(--ink-2);
+}
+
+#about ul {
+    padding-left: 1.2rem;
+}
+
+#about a {
+    color: var(--series-1);
+}
+
+#about .reference {
+    margin-top: 1rem;
+    font-size: 0.8rem;
+}
+
+.about-close {
+    float: right;
+}
+
+.about-close button {
+    border: none;
+    background: none;
+    font-size: 1rem;
 }
 
 h2 {

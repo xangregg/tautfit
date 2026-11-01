@@ -62,7 +62,7 @@
     ta.value = 'x,y\n1,1\n2,2\n4,4\n6,5\n7,5.6\n8,6\n9,6.2\n10,6.5\n20,8\n21,7\n';
     ta.dispatchEvent(new Event('input'));
     await wait(400);
-    const sigma = [...document.querySelectorAll('#controls select')].find(s => [...s.options].some(o => o.value === 'gsjs'));
+    let sigma = [...document.querySelectorAll('#controls select')].find(s => [...s.options].some(o => o.value === 'gsjs'));
     sigma.value = 'gsjs';
     sigma.dispatchEvent(new Event('change'));
     await until(() => !document.getElementById('charts').classList.contains('pending'));
@@ -71,9 +71,30 @@
     if (!gapOk)
         console.error('no gap connector for data with a wide gap in x');
     results.push({ key: 'gap connectors', ok: gapOk });
+
+    // 3. A link reproduces the view: leave via another hash, come back, and the readouts match.
+    const idle = () => until(() => !document.getElementById('charts').classList.contains('pending'));
+    const readoutText = () => document.getElementById('readouts').innerText;
+    await wait(400); // the hash is written after a debounce
+    const link = location.hash;
+    const before = readoutText();
+    location.hash = '#source=bumps&method=minTV0';
+    await wait(100);
+    await idle();
+    const away = readoutText();
+    location.hash = link;
+    await wait(100);
+    await idle();
+    await wait(50);
+    const linkOk = link.includes('data=') && away !== before && readoutText() === before;
+    if (!linkOk)
+        console.error(`link did not reproduce the view (hash ${link})`);
+    results.push({ key: 'link round trip', ok: linkOk });
+    sigma = [...document.querySelectorAll('#controls select')].find(s => [...s.options].some(o => o.value === 'gsjs'));
     sigma.value = 'diff';
     sigma.dispatchEvent(new Event('change'));
-    src.value = 'blocks';
-    src.dispatchEvent(new Event('change'));
+    const srcNow = document.getElementById('source'); // controls are rebuilt when a link is followed
+    srcNow.value = 'blocks';
+    srcNow.dispatchEvent(new Event('change'));
     return results;
 })()

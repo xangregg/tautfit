@@ -322,7 +322,9 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
   τ (or α with MC calibration), σ override, λ, method (taut string / minTV k / minSup k / combined),
   band type (none / monotone / piecewise monotone / convex / piecewise convex / smoothness-K), θ, K slider.
 - Recompute in workers; keep the UI responsive; debounce sliders.
-- Keep state in the URL hash for shareable links (dataset, seed, settings), not localStorage.
+- Keep state in the URL hash for shareable links (dataset, seed, settings), not localStorage. *(M7: `urlstate.js`;
+  small pasted data travels in the link, compressed.)*
+- **Toolbar (M7):** Copy link, Download CSV (`export.js`, what is on screen), About dialog.
 
 ---
 
@@ -452,8 +454,19 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         multiplicity of identical (x, y) points.
 
 ### M7 — Polish and deploy
-- [ ] URL-hash state, CSV export of fit and bands, About panel with the paper reference and method notes
+- [x] URL-hash state, CSV export of fit and bands, About panel with the paper reference and method notes
+      → `src/ui/urlstate.js`: only settings that differ from the defaults are written (readable key=value), n and σ
+        relative to the chosen signal's defaults; pasted data deflate-compressed + base64url when ≤ 8000 chars
+        (the ages data: 101 rows, 537 chars of CSV → 294), otherwise left out and the Copy link message says so. Every value
+        is validated against the control ranges; invalid entries are ignored and listed in the readout notes.
+        Written with `history.replaceState` (debounced) so reloads keep the view without flooding Back; following
+        a link or editing the hash rebuilds the controls. `src/ui/export.js`: x, y, f_true, every drawn fit
+        (primary first), band and exact bounds, full precision, Inf/-Inf for infinite edges, user column names.
+        Toolbar: Copy link, Download CSV, About (a `<dialog>`). Tests: test/urlstate.test.js,
+        test/export.test.js; `npm run check:ui` gained a link round-trip check (mutation-tested).
 - [ ] GitHub Pages from main branch root; verify .wasm loads from Pages
+      → app renamed tautfit (repo and site name; the local folder is still nicefit). `.nojekyll` added so Pages
+        serves files as-is.
 
 ### M8 — Later: "least ambitious fit" on top of Aₙ
 Ladder of simplicity checked by tiny LPs inside Aₙ: constant feasible? → linear (a + b·x) feasible? →

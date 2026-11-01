@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>nicefit: simplest fits in a confidence region</title>
+    <title>tautfit: simplest fits in a confidence region</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="styles.css">
     <script type="importmap">
@@ -17,11 +17,19 @@
 </head>
 <body>
     <header>
-        <h1>nicefit</h1>
-        <p class="subtitle">
-            Nonparametric regression after Davies, Kovac &amp; Meise (2009):
-            the simplest functions consistent with the data.
-        </p>
+        <div>
+            <h1>tautfit</h1>
+            <p class="subtitle">
+                Nonparametric regression after Davies, Kovac &amp; Meise (2009):
+                the simplest functions consistent with the data.
+            </p>
+        </div>
+        <nav class="toolbar" aria-label="Page actions">
+            <span id="toolbar-message" role="status"></span>
+            <button type="button" id="copy-link" title="Copy a link to this view: data source, settings and, if small enough, your pasted data">Copy link</button>
+            <button type="button" id="download-csv" title="Data, fits and band as CSV, one row per observation">Download CSV</button>
+            <button type="button" id="about-open">About</button>
+        </nav>
     </header>
     <main>
         <aside id="controls" aria-label="Controls"></aside>
@@ -39,5 +47,66 @@
             <a href="https://arxiv.org/abs/0711.0690">arXiv:0711.0690</a>
         </p>
     </footer>
+    <dialog id="about" aria-labelledby="about-title">
+        <form method="dialog" class="about-close"><button type="submit" aria-label="Close">✕</button></form>
+        <h2 id="about-title">About tautfit</h2>
+        <p>
+            tautfit implements the approach to nonparametric regression of Davies, Kovac &amp; Meise (2009).
+            Instead of choosing a bandwidth or a penalty, it first describes every function that is
+            <em>consistent with the data</em>, then picks the simplest of them.
+        </p>
+        <h3>The confidence region Aₙ</h3>
+        <p>
+            A function g is consistent with the data when no interval of the data shows a systematic
+            residual: for every interval I in a multiresolution family (λ = 2 gives dyadic blocks of
+            1, 2, 4, … consecutive x values),
+            |Σ<sub>I</sub>(y − g)| / √|I| ≤ c, with c = σ·√(τ·log n) (eqs. 6–7). σ is estimated from the data,
+            and τ = 3 gives about 95% coverage for large n, or τ can be calibrated by Monte Carlo for the
+            actual n. The residual view under the chart shows every interval’s |w(I)|/c; cells above 1 are
+            violations. Intervals are intervals of x, so tied observations are never separated.
+        </p>
+        <h3>Fits: the simplest functions in Aₙ</h3>
+        <ul>
+            <li><strong>Taut string</strong>: approximately the fewest local extremes of any function in Aₙ
+                (§3, with local squeezing).</li>
+            <li><strong>min TV(g), TV(g′), TV(g″)</strong>: least total variation of the function, its slope or
+                its curvature, solved as linear programs (§4.1). They give a step function, a linear spline
+                and a smooth curve.</li>
+            <li><strong>min ‖g′‖∞, ‖g″‖∞</strong>: the smallest bound on the slope or curvature (eq. 46).
+                min ‖g″‖∞ gives K_min, the least curvature any consistent function needs.</li>
+            <li><strong>min TV(g″) + taut-string shape</strong>: smooth, with the taut string’s monotone pieces
+                (§4.2).</li>
+        </ul>
+        <h3>Confidence bands</h3>
+        <p>
+            Aₙ alone does not bound f at a point, but with a shape assumption it does: monotone, piecewise
+            monotone, convex/concave, piecewise convex, or |f″| ≤ K (§5). The fast bounds take
+            O(n log n); exact LP bounds (2n linear programs, n ≤ 300) can be drawn for comparison. A band
+            that is empty somewhere means the assumption is inconsistent with the data. Their coverage
+            rests on Aₙ holding for <em>all</em> intervals, so the readout says which τ supports it.
+        </p>
+        <h3>Departures from the paper</h3>
+        <p>
+            A few formulas in the arXiv version needed corrections (for example, the KKT conditions of the
+            taut string, the convex lower bound and the smoothness bounds), and the coverage claim of eq. 11
+            holds only marginally for all intervals. The project plan lists each issue with the evidence:
+            <a href="PLAN.md">PLAN.md</a>, section 2.
+        </p>
+        <h3>Using the page</h3>
+        <ul>
+            <li>Paste or drop CSV/TSV data, or choose a simulated signal. Hover the chart and the residual view
+                for exact values.</li>
+            <li>The address bar always holds the current settings, so reloading keeps them and
+                <em>Copy link</em> shares them. Pasted data is included when it compresses to a short enough
+                link.</li>
+            <li><em>Download CSV</em> saves x, y, every fit shown and the band, one row per observation.</li>
+        </ul>
+        <p class="reference">
+            P. L. Davies, A. Kovac, M. Meise (2009). Nonparametric regression, confidence regions and
+            regularization. <i>Ann. Statist.</i> 37(5B):2597–2625.
+            <a href="https://arxiv.org/abs/0711.0690">arXiv:0711.0690</a>.
+            LP solver: <a href="https://highs.dev">HiGHS</a> (MIT license), compiled to WebAssembly.
+        </p>
+    </dialog>
 </body>
 </html>
