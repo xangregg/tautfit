@@ -123,3 +123,52 @@ test('combined rejects an extra shape constraint', () => {
     const { x, y } = userData();
     assert.throws(() => regularize(highs, { x, y, method: 'combined', shape: DECREASING }), RangeError);
 });
+
+test('constant: τ_min matches a direct minimization over the constant', () => {
+    const { x, y } = userData();
+    const intervals = xIntervalFamily(x, 2);
+    const sigma = sigmaMAD(y, x);
+    const r = shapeThreshold(highs, { x, y, sigma, intervals, shape: { type: 'constant' } });
+    // c(a) = max_I |Σ_I y − a·|I|| / √|I| is convex in a: ternary search
+    const S = [0];
+    for (const v of y)
+        S.push(S[S.length - 1] + v);
+    const cOf = a => Math.max(...intervals.map(({ lo, hi }) => {
+        const len = hi - lo + 1;
+        return Math.abs(S[hi + 1] - S[lo] - a * len) / Math.sqrt(len);
+    }));
+    let lo = Math.min(...y);
+    let hi = Math.max(...y);
+    for (let k = 0; k < 200; k++) {
+        const m1 = lo + (hi - lo) / 3;
+        const m2 = hi - (hi - lo) / 3;
+        if (cOf(m1) < cOf(m2))
+            hi = m2;
+        else
+            lo = m1;
+    }
+    const TOL = 1e-6; // relative, solver tolerance
+    assert.ok(Math.abs(r.c - cOf(lo)) < TOL * r.c, `LP ${r.c} vs direct ${cOf(lo)}`);
+    // regularize with the constant shape at that threshold returns a constant
+    const g = regularize(highs, { x, y, sigma, intervals, method: 'minTV', k: 0, shape: { type: 'constant' },
+        tau: r.tau * (1 + 1e-6) });
+    assert.equal(g.status, 'optimal');
+    assert.ok(Math.max(...g.g) - Math.min(...g.g) < 1e-7);
+});
+
+test('linear: small τ_min for a straight line plus noise, large for a sine; the fit is a line', () => {
+    const line = simulate('line', 500, 0.25, 2);
+    const sine = simulate('sine', 500, 0.2, 2);
+    const LINEAR = { type: 'linear' };
+    const a = shapeThreshold(highs, { x: line.x, y: line.y, shape: LINEAR });
+    const b = shapeThreshold(highs, { x: sine.x, y: sine.y, shape: LINEAR });
+    assert.ok(a.tau < 3, `line τ_min ${a.tau}`);
+    assert.ok(b.tau > 30, `sine τ_min ${b.tau}`);
+    // with ties and unequal spacing: the constrained fit is collinear
+    const { x, y } = userData();
+    const r = regularize(highs, { x, y, method: 'minTV', k: 2, shape: LINEAR, tau: 6 });
+    assert.equal(r.status, 'optimal');
+    const slope = (r.g[y.length - 1] - r.g[0]) / (x[y.length - 1] - x[0]);
+    for (let i = 0; i < y.length; i++)
+        assert.ok(Math.abs(r.g[i] - (r.g[0] + slope * (x[i] - x[0]))) < 1e-6, `not on the line at ${i}`);
+});

@@ -15,7 +15,7 @@ consistent with the data, then picks the simplest of them.
   The residual view under the chart shows that ratio for every interval.
 - **Simplest fits in Aₙ.** The taut string (approximately the fewest local extremes), and linear programs for
   least total variation of g, g′ or g″, the smallest bound on |g′| or |g″| (K_min), and a smooth fit with the
-  taut string's monotone pieces. The LP fits can be constrained to be monotone, convex or concave; when no such
+  taut string's monotone pieces. The LP fits can be constrained to be constant, linear, monotone, convex or concave; when no such
   function is in Aₙ, the app gives the smallest τ that would admit one and the corresponding p-value.
 - **Honest confidence bands.** Under a shape assumption (monotone, piecewise monotone, convex/concave,
   piecewise convex, or |f″| ≤ K), Aₙ gives pointwise bounds on f. Fast O(n log n) bounds, plus exact LP

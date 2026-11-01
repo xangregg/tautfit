@@ -488,10 +488,22 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         highs.wasm as `application/wasm` (streaming instantiation works). The full `tools/ui-checks.js` passes
         against the live site with no console errors; exact LP bounds on exp(5t), n = 200: 401 LPs in 0.64 s.
 
-### M8 — Later: "least ambitious fit" on top of Aₙ
+### M8 — Moved to a separate project: "least ambitious fit" on top of Aₙ
 Ladder of simplicity checked by tiny LPs inside Aₙ: constant feasible? → linear (a + b·x) feasible? →
 minTV(1) linear spline with fewest kinks (ramps with flat ends arise naturally), then optionally smooth the
 joins with minTV(2) under the same sign pattern. Display which rung was reached.
+
+**Decision (after M7):** tautfit stays a faithful implementation of the paper; the ladder becomes its own
+project. Minimizing the number of kinks is combinatorial (heuristics or mixed-integer programming, not one LP)
+and makes claims the paper does not, so it would blur what this app stands for.
+- [x] The bottom rungs are here, as shape constraints in the paper's own terms: "constrain the fit to be"
+      Constant or Linear gives the simplest such function in Aₙ, or, when there is none, the smallest τ that
+      admits one and its p-value (§1.6 shape test). Constant finds whether *any* constant is in Aₙ, not just
+      mean(y). Tests: test/shapetest.test.js (constant c_min equals a direct minimization over the constant).
+- Reusable for the new project: everything in `src/core/` is pure and tested. Aₙ (`intervals.js`, `region.js`,
+  `sigma.js`, `calibrate.js`), the LP builder with shared frame and shape rows (`lp-build.js`, `lp-solve.js`),
+  `regularize.js`, `shapetest.js` (smallest τ for any linear constraint set on g), and `exact.js`. The UI
+  modules (`chart.js`, `residual.js`, `urlstate.js`, `export.js`) are also independent of the methods.
 
 ---
 
@@ -509,7 +521,7 @@ Donoho–Johnstone test functions on t ∈ [0, 1] (verify constants against a st
 Conventionally scaled so sd(f) = 7 with σ = 1 (make the scaling a parameter).
 
 From the paper: exp(5t) + 5Z, n = 1000 (Fig. 3); sin(4πt) + 0.2Z, n = 500 (Fig. 6); narrow box peak
-b((t − 1/2)/0.01) (eq. 18). Also: pure noise, straight line, and a logistic ramp (for M8).
+b((t − 1/2)/0.01) (eq. 18). Also: pure noise, straight line, and a logistic ramp (for the least-ambitious-fit ladder, now a separate project; see M8).
 
 ---
 

@@ -128,6 +128,8 @@ export function lpFrame(x, y, sigma) {
 
 /**
  * @typedef {{type: 'monotone', direction: 1|-1}
+ *     | {type: 'constant'}
+ *     | {type: 'linear'}
  *     | {type: 'pwMonotone', segments: Array<{lo: number, hi: number, direction: 1|-1}>}
  *     | {type: 'convex', concave?: boolean}
  *     | {type: 'pwConvex', segments: Array<{lo: number, hi: number, type: 'convex'|'concave'|'linear'}>}
@@ -148,6 +150,10 @@ export function shapeConstraints(shape, frame) {
     const n = group.length;
     if (shape.type === 'monotone')
         return { signs: new Int8Array(Math.max(0, m - 1)).fill(shape.direction) };
+    if (shape.type === 'constant')
+        return { signs: new Int8Array(Math.max(0, m - 1)).fill(2) };
+    if (shape.type === 'linear')
+        return { curvature: new Int8Array(Math.max(0, m - 2)).fill(2) };
     if (shape.type === 'pwMonotone') {
         // observation step i (i → i+1) gets its segment's direction; distinct step j uses the step that
         // leaves group j
@@ -251,7 +257,7 @@ function intervalTerms(pCol, lo, hi) {
 
 /**
  * Shape rows on distinct x (second divided differences D²_j over h_j..h_{j+2}, τ units):
- *   signs      per distinct step: +1 ⇒ h_{j+1} ≥ h_j, −1 ⇒ ≤, 0 free
+ *   signs      per distinct step: +1 ⇒ h_{j+1} ≥ h_j, −1 ⇒ ≤, 2 ⇒ =, 0 free
  *   curvature  per distinct second difference: +1 ⇒ D²_j ≥ 0 (convex there), −1 ⇒ ≤ 0, 2 ⇒ = 0, 0 free
  *   maxCurv    |D²_j| ≤ maxCurv (smoothness ‖g″‖∞ ≤ K, converted to τ units and standardized y)
  * D²_j ≥ 0 is exactly convexity of the interpolant at any spacing, and ‖f″‖∞ ≤ K implies |D²_j| ≤ K
@@ -262,7 +268,9 @@ function addShapeRows(b, spec, hStart) {
     if (spec.signs) {
         for (let j = 0; j + 1 < m; j++) {
             const s = spec.signs[j];
-            if (s > 0)
+            if (s === 2)
+                b.addRow([hStart + j + 1, hStart + j], [1, -1], 0, 0);
+            else if (s > 0)
                 b.addRow([hStart + j + 1, hStart + j], [1, -1], 0, Infinity);
             else if (s < 0)
                 b.addRow([hStart + j + 1, hStart + j], [1, -1], -Infinity, 0);
@@ -365,7 +373,7 @@ export function buildMinThreshold(spec) {
  * @property {'minTV'|'minSup'} objective
  * @property {number} k               derivative order: minTV k ∈ {0,1,2}, minSup k ∈ {1,2}
  * @property {Int8Array} [signs]      optional sign of h_{j+1} − h_j per distinct step (length m − 1):
- *                                    +1 ⇒ ≥ 0, −1 ⇒ ≤ 0, 0 ⇒ free
+ *                                    +1 ⇒ ≥ 0, −1 ⇒ ≤ 0, 2 ⇒ = 0, 0 ⇒ free
  * @property {Array<{groups: number[], mid: number, value: number, type: 'max'|'min'}>} [fixed]
  *     optional extremes to pin: h ≤ value (max) or ≥ value (min) on `groups`, h = value at `mid`
  * @property {Int8Array} [curvature]  optional curvature codes per distinct second difference (addShapeRows)

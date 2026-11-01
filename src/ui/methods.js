@@ -66,6 +66,8 @@ export const METHOD_KEYS = Object.keys(METHODS);
  */
 export const FIT_SHAPES = {
     none: { label: 'None', name: '', shape: null },
+    constant: { label: 'Constant', name: 'constant', shape: { type: 'constant' } },
+    linear: { label: 'Linear (a + b·x)', name: 'linear', shape: { type: 'linear' } },
     decreasing: { label: 'Decreasing', name: 'decreasing', shape: { type: 'monotone', direction: -1 } },
     increasing: { label: 'Increasing', name: 'increasing', shape: { type: 'monotone', direction: 1 } },
     convex: { label: 'Convex', name: 'convex', shape: { type: 'convex' } },

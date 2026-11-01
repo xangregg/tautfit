@@ -400,6 +400,11 @@ function pText(cov) {
     return cov >= 1 ? `p < ${fmt(1 / CALIBRATION_B)}` : `p ≈ ${d3.format('.2~g')(1 - cov)}`;
 }
 
+// Monte Carlo coverage as a percentage; when every sample is covered, say only what B samples can show.
+function coverageText(cov) {
+    return cov >= 1 ? `> ${fmt(100 * (1 - 1 / CALIBRATION_B))}%` : `${fmt(100 * cov)}%`;
+}
+
 // Readout rows for the shape test: the smallest τ admitting the shape and, when a Monte Carlo sample is
 // available, the coverage of Aₙ at that τ (1 − coverage is a p-value for the shape; src/core/shapetest.js).
 function shapeTestRows(test, failed) {
@@ -415,7 +420,7 @@ function shapeTestRows(test, failed) {
     else if (!test.pending) {
         value = fmt(test.tau);
         title = test.cov !== null
-            ? `Aₙ at that τ covers ${fmt(100 * test.cov)}% (Monte Carlo, B = ${CALIBRATION_B}, this n and design): `
+            ? `Aₙ at that τ covers ${coverageText(test.cov)} (Monte Carlo, B = ${CALIBRATION_B}, this n and design): `
                 + `${pText(test.cov)} for “f is ${name}”`
             : test.covPending ? 'computing the coverage of that τ…'
                 : `coverage not computed for n > ${CALIBRATE_ALL_MAX_N}`;
@@ -430,7 +435,7 @@ function shapeWarning(base, test, methodKey) {
     if (test.tau !== undefined) {
         text += `; one needs τ ≥ ${fmt(test.tau)}`;
         if (test.cov !== null && test.cov !== undefined)
-            text += `, where Aₙ covers ${fmt(100 * test.cov)}% at this n, so the data reject “${name}” at ${pText(test.cov)}`;
+            text += `, where Aₙ covers ${coverageText(test.cov)} at this n, so the data reject “${name}” at ${pText(test.cov)}`;
     }
     return `${text}. Showing the unconstrained ${METHODS[methodKey].name}.`;
 }
