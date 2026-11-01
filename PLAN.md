@@ -38,6 +38,11 @@ Also provide `allIntervals(n)` (every [i, j], ~n²/2) for small n, used only for
 
 Represent an interval as {lo, hi} with 0-based inclusive indices.
 
+*Corrected after M5 (Known issue 14):* the family is built on the **distinct x values** and mapped to observation
+ranges (`xIntervalFamily`, `xIntervalLevels`, `allXIntervals`), because the paper's intervals are intervals of x
+(eq. 6: I = [t_j, t_k], |I| = number of points in it) and so never separate tied observations. Without ties this
+is identical to the index-based family.
+
 ### 1.3 Confidence region Aₙ (eqs. 6–8)
 
 For a candidate vector g (values at the design points) and interval I with |I| points:
@@ -183,7 +188,10 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
   and the lower bound index-linear interpolation; Known issue 12. The UI disables them for unequal spacing.)*
 - Derivative-based methods use divided differences on rescaled x.
 - Ties in x: stable sort, keep rows. For derivative-based LPs add gᵢ = gᵢ₊₁ for tied x and skip
-  zero-width differences. For display, plot the fit's mean at each tied x. *(M3: all LP fits use one variable per
+  zero-width differences. For display, plot the fit's mean at each tied x. *(Corrected after M5, Known issue 14:
+  that was not enough. Aₙ's intervals must be intervals of x, the taut string has nodes only between distinct x
+  (one value per x), and monotone band windows are runs of whole tie groups. σ̂ (eq. 10, GSJS) still depends on
+  the order of tied rows; a pure-error estimate from the replicates would not.)* *(M3: all LP fits use one variable per
   distinct x, so tied observations share a value by construction.)*
 
 ---
@@ -231,6 +239,12 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
     95.0% at n = 500. Calibrated τ₅₀₀(0.95): dyadic 2.69, all intervals 3.12. Since the fast bands' honesty rests on
     all-interval coverage (issue 6), a τ calibrated for the dyadic family is too small for them (band coverage
     91.6–93.1% at n = 500), while one calibrated for all intervals gives 96.2–96.5%. The UI says which applies.
+14. *(Our bug, not the paper's.)* The interval family was built over observation indices, so with tied x it split
+    tie groups in arbitrary (file) order: Aₙ depended on row order, and forcing one value per x could make it
+    empty. A user data set (101 rows, 30 distinct ages) made every LP fit infeasible: inside the age-17 group
+    alone the index intervals required g(17) ≥ 10.30 and ≤ 8.85. The taut string also gave up to 8.5 different
+    values at one x. Fixed by using intervals of x throughout (eq. 6), tie-aware taut-string nodes and band
+    windows; regression tests in test/ties.test.js (including that data set and a row-shuffle invariance test).
 
 ---
 

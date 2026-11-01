@@ -10,7 +10,7 @@
 import { tieGroups } from './derivatives.js';
 import { buildShapeRegion } from './lp-build.js';
 import { modelStatusName } from './lp-solve.js';
-import { multiresolution } from './intervals.js';
+import { xIntervalFamily } from './intervals.js';
 import { threshold } from './region.js';
 import { sigmaMAD } from './sigma.js';
 
@@ -45,7 +45,7 @@ export function exactBounds(highs, spec, onProgress) {
     const n = y.length;
     const sigma = spec.sigma ?? sigmaMAD(y);
     const tau = spec.tau ?? DEFAULT_TAU;
-    const intervals = spec.intervals ?? multiresolution(n, spec.lambda ?? 2);
+    const intervals = spec.intervals ?? xIntervalFamily(x, spec.lambda ?? 2);
     const c = threshold(sigma, tau, n);
 
     let mean = 0;

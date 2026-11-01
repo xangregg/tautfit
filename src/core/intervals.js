@@ -77,3 +77,64 @@ export function allIntervals(n) {
     }
     return out;
 }
+
+/**
+ * Ranges of tied x: group j covers observations start[j]..start[j+1]−1 (x sorted ascending).
+ *
+ * @param {ArrayLike<number>} x  sorted
+ * @returns {{start: Int32Array, m: number, ties: boolean}}  start has length m + 1, start[m] = n
+ */
+export function tieRanges(x) {
+    const n = x.length;
+    const start = [0];
+    for (let i = 1; i < n; i++) {
+        if (x[i] !== x[i - 1])
+            start.push(i);
+    }
+    start.push(n);
+    const m = start.length - 1;
+    return { start: Int32Array.from(start), m, ties: m < n };
+}
+
+// Map intervals over distinct-x indices to observation ranges.
+function toObservations(groupIntervals, start) {
+    return groupIntervals.map(({ lo, hi, level }) => ({ lo: start[lo], hi: start[hi + 1] - 1, level }));
+}
+
+/**
+ * The multiresolution scheme over intervals of x (paper eqs. 6 and 9: I = [t_j, t_k], |I| = number of
+ * points in it), level by level. Built on the distinct x values and mapped to observation ranges, so an
+ * interval never separates tied observations; without ties it equals multiresolutionLevels(n, λ).
+ *
+ * @param {ArrayLike<number>} x  sorted (ties allowed)
+ * @param {number} lambda
+ * @returns {Interval[][]}  observation-index intervals; level k groups λᵏ distinct x values
+ */
+export function xIntervalLevels(x, lambda = 2) {
+    const { start, m } = tieRanges(x);
+    return multiresolutionLevels(m, lambda).map(level => toObservations(level, start));
+}
+
+/**
+ * De-duplicated multiresolution family of x-intervals (see xIntervalLevels). Without ties it equals
+ * multiresolution(n, λ).
+ *
+ * @param {ArrayLike<number>} x  sorted (ties allowed)
+ * @param {number} lambda
+ * @returns {Interval[]}
+ */
+export function xIntervalFamily(x, lambda = 2) {
+    const { start, m } = tieRanges(x);
+    return toObservations(multiresolution(m, lambda), start);
+}
+
+/**
+ * Every x-interval [t_j, t_k] as an observation range (m(m+1)/2 of them, m distinct x).
+ *
+ * @param {ArrayLike<number>} x  sorted (ties allowed)
+ * @returns {Interval[]}
+ */
+export function allXIntervals(x) {
+    const { start, m } = tieRanges(x);
+    return toObservations(allIntervals(m), start);
+}

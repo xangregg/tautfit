@@ -1,7 +1,8 @@
 // Taut string with local squeezing (paper §3.2 and appendix 7.3; Davies & Kovac 2001).
 //
-// Geometry: nodes i = 0..n at abscissa i. The tube has lower/upper boundaries Lᵢ ≤ Uᵢ, linear between
-// nodes, with pinned ends (L₀ = U₀, Lₙ = Uₙ). The taut string F̃ is the shortest path through the tube;
+// Geometry: nodes i = 0..n at abscissa i (or at given increasing positions; with tied x the nodes sit
+// only between distinct x values, at cumulative observation counts). The tube has lower/upper
+// boundaries Lᵢ ≤ Uᵢ, linear between nodes, with pinned ends (L₀ = U₀, Lₙ = Uₙ). The taut string F̃ is the shortest path through the tube;
 // because the boundaries are polylines with vertices at the nodes, F̃ is linear between nodes and is
 // determined by its node values. Its slopes f̃ᵢ = F̃ᵢ − F̃ᵢ₋₁ (i = 1..n) are the regression fit, with
 // paper observation i (1-based) ↔ code index i − 1.
@@ -14,7 +15,7 @@
 
 import { prefixSums } from './prefix.js';
 import { sigmaMAD } from './sigma.js';
-import { multiresolution } from './intervals.js';
+import { multiresolution, xIntervalFamily, tieRanges } from './intervals.js';
 import { threshold, checkRegion } from './region.js';
 
 const DEFAULT_TAU = 3; // paper default
@@ -34,10 +35,11 @@ const DEFAULT_MAX_ITER = 200;
  *
  * @param {ArrayLike<number>} lower  Lᵢ, i = 0..n (n ≥ 1)
  * @param {ArrayLike<number>} upper  Uᵢ ≥ Lᵢ, with U₀ = L₀ and Uₙ = Lₙ
+ * @param {ArrayLike<number>} [pos]  node abscissae, strictly increasing (default 0..n)
  * @returns {{F: Float64Array, f: Float64Array}}  F: node values (length n + 1);
- *     f: slopes, f[i − 1] = F[i] − F[i−1] (length n), set to the exact segment slope
+ *     f: slopes, f[i − 1] = (F[i] − F[i−1]) / (pos[i] − pos[i−1]) (length n), the exact segment slope
  */
-export function tautString(lower, upper) {
+export function tautString(lower, upper, pos) {
     const n = lower.length - 1;
     if (n < 1 || upper.length !== n + 1)
         throw new RangeError('tube needs matching lower/upper arrays of length ≥ 2');
@@ -58,12 +60,14 @@ export function tautString(lower, upper) {
     let lh = 0;
     let lt = 0;
 
-    const slope = (x0, y0, x1, y1) => (y1 - y0) / (x1 - x0);
+    const P = pos ? (k => pos[k]) : (k => k);
+    // slope between node k0 (value y0) and node k1 (value y1)
+    const slope = (k0, y0, k1, y1) => (y1 - y0) / (P(k1) - P(k0));
 
     function emit(x, y) {
-        const s = (y - ay) / (x - ax);
+        const s = (y - ay) / (P(x) - P(ax));
         for (let j = ax + 1; j <= x; j++) {
-            F[j] = j === x ? y : ay + s * (j - ax);
+            F[j] = j === x ? y : ay + s * (P(j) - P(ax));
             f[j - 1] = s;
         }
         ax = x;
@@ -123,25 +127,27 @@ export function tautString(lower, upper) {
 }
 
 /**
- * Reference taut string for tests: minimizes Σ (Fᵢ − Fᵢ₋₁)² over the tube by projected successive
- * over-relaxation, Fᵢ ← clamp((1−ω)Fᵢ + ω(Fᵢ₋₁ + Fᵢ₊₁)/2, Lᵢ, Uᵢ). O(n²) or worse; small n only.
+ * Reference taut string for tests: minimizes Σ (Fᵢ − Fᵢ₋₁)²/(pᵢ − pᵢ₋₁) over the tube by projected
+ * successive over-relaxation; the unconstrained minimizer in Fᵢ is the position-weighted average
+ * (bFᵢ₋₁ + aFᵢ₊₁)/(a + b), a = pᵢ − pᵢ₋₁, b = pᵢ₊₁ − pᵢ. O(n²) or worse; small n only.
  *
  * @param {ArrayLike<number>} lower
  * @param {ArrayLike<number>} upper
- * @param {{relTol?: number, maxSweeps?: number}} [opts]  stop when the largest change in a sweep is
- *     below relTol × max(1, max |boundary|); an absolute tolerance near 1e−14 can sit below rounding
- *     noise and never be met
+ * @param {{relTol?: number, maxSweeps?: number, pos?: ArrayLike<number>}} [opts]  stop when the largest
+ *     change in a sweep is below relTol × max(1, max |boundary|); an absolute tolerance near 1e−14 can
+ *     sit below rounding noise and never be met. pos: node abscissae (default 0..n)
  * @returns {{F: Float64Array, f: Float64Array, sweeps: number, converged: boolean}}
  */
-export function tautStringReference(lower, upper, { relTol = 1e-14, maxSweeps = 2e6 } = {}) {
+export function tautStringReference(lower, upper, { relTol = 1e-14, maxSweeps = 2e6, pos } = {}) {
     const n = lower.length - 1;
     let scale = 1;
     for (let i = 0; i <= n; i++)
         scale = Math.max(scale, Math.abs(lower[i]), Math.abs(upper[i]));
     const tol = relTol * scale * 8; // 8 ulp-ish of the largest magnitude
+    const P = pos ? (k => pos[k]) : (k => k);
     const F = new Float64Array(n + 1);
     for (let i = 0; i <= n; i++) {
-        const straight = lower[0] + (lower[n] - lower[0]) * i / n;
+        const straight = lower[0] + (lower[n] - lower[0]) * (P(i) - P(0)) / (P(n) - P(0));
         F[i] = Math.min(upper[i], Math.max(lower[i], straight));
     }
     const omega = 2 / (1 + Math.sin(Math.PI / (n + 1)));
@@ -149,7 +155,9 @@ export function tautStringReference(lower, upper, { relTol = 1e-14, maxSweeps = 
     for (; sweeps < maxSweeps; sweeps++) {
         let change = 0;
         for (let i = 1; i < n; i++) {
-            const target = (1 - omega) * F[i] + omega * 0.5 * (F[i - 1] + F[i + 1]);
+            const a = P(i) - P(i - 1);
+            const b = P(i + 1) - P(i);
+            const target = (1 - omega) * F[i] + omega * (b * F[i - 1] + a * F[i + 1]) / (a + b);
             const v = Math.min(upper[i], Math.max(lower[i], target));
             change = Math.max(change, Math.abs(v - F[i]));
             F[i] = v;
@@ -159,7 +167,7 @@ export function tautStringReference(lower, upper, { relTol = 1e-14, maxSweeps = 
     }
     const f = new Float64Array(n);
     for (let i = 1; i <= n; i++)
-        f[i - 1] = F[i] - F[i - 1];
+        f[i - 1] = (F[i] - F[i - 1]) / (P(i) - P(i - 1));
     return { F, f, sweeps, converged: sweeps < maxSweeps };
 }
 
@@ -175,7 +183,8 @@ export function tautStringReference(lower, upper, { relTol = 1e-14, maxSweeps = 
  * @param {ArrayLike<number>} lower
  * @param {ArrayLike<number>} upper
  * @param {ArrayLike<number>} F  node values (length n + 1)
- * @param {{eps?: number, epsSlope?: number}} [opts]  absolute tolerances (default 1e−9 × scale)
+ * @param {{eps?: number, epsSlope?: number, pos?: ArrayLike<number>}} [opts]  absolute tolerances
+ *     (default 1e−9 × scale); pos: node abscissae (default 0..n), slopes are per unit position
  * @returns {{ok: boolean, failures: Array<{node: number, reason: string}>}}
  */
 export function checkKKT(lower, upper, F, opts = {}) {
@@ -193,8 +202,9 @@ export function checkKKT(lower, upper, F, opts = {}) {
             failures.push({ node: i, reason: 'infeasible' });
             continue;
         }
-        const a = F[i] - F[i - 1];
-        const b = F[i + 1] - F[i];
+        const P = opts.pos ? (k => opts.pos[k]) : (k => k);
+        const a = (F[i] - F[i - 1]) / (P(i) - P(i - 1));
+        const b = (F[i + 1] - F[i]) / (P(i + 1) - P(i));
         const atUpper = F[i] >= upper[i] - eps;
         const atLower = F[i] <= lower[i] + eps;
         if (atUpper && atLower)
@@ -211,14 +221,16 @@ export function checkKKT(lower, upper, F, opts = {}) {
 
 /**
  * @typedef {object} TautStringFit
- * @property {Float64Array} f          fitted values at the observations (piecewise constant)
+ * @property {Float64Array} f          fitted values at the observations (piecewise constant; with x
+ *                                     given, one value per distinct x)
  * @property {number} iterations       taut strings computed
  * @property {boolean} converged       final f ∈ Aₙ
  * @property {import('./region.js').RegionCheck} check  Aₙ check of the final f
- * @property {Float64Array} widths     final tube half-widths λᵢ at nodes 0..n
- * @property {Float64Array} lower      final tube, nodes 0..n (cumulative sums of centered y)
+ * @property {Float64Array} widths     final tube half-widths λₖ at the nodes
+ * @property {Float64Array} lower      final tube at the nodes (cumulative sums of centered y)
  * @property {Float64Array} upper
- * @property {Float64Array} F          final string at nodes 0..n (same centering)
+ * @property {Float64Array} F          final string at the nodes (same centering)
+ * @property {Float64Array} pos        node abscissae in observation counts (0..n without ties)
  * @property {number} sigma            σ used
  * @property {number} c                threshold used
  * @property {{lo: number, hi: number, level: number}[]} intervals  family checked
@@ -228,10 +240,16 @@ export function checkKKT(lower, upper, F, opts = {}) {
  * Taut string regression with local squeezing (appendix 7.3): the member of Aₙ found by the paper's
  * algorithm, which has (approximately) the fewest local extremes.
  *
- * 1. Yᵢ = cumulative sums of y; tube Yᵢ ± λᵢ with λ₀ = λₙ = 0 and a common initial interior width.
+ * 1. Yᵢ = cumulative sums of y; tube Yᵢ ± λᵢ with λ at the ends 0 and a common initial interior width.
  * 2. f̃ = slopes of the taut string.
- * 3. If f̃ ∉ Aₙ: for each interior node i (between paper observations i and i+1, i.e. code indices
- *    i−1 and i), if any violated interval contains either observation, λᵢ ← squeeze·λᵢ. Repeat.
+ * 3. If f̃ ∉ Aₙ: for each interior node, if any violated interval contains an observation on either
+ *    side of it, λ ← squeeze·λ. Repeat.
+ *
+ * Tied x (PLAN.md Known issue 14). When `x` is given, nodes sit only between distinct x values, at the
+ * cumulative observation counts, so the string is straight across each group of tied observations and
+ * f̃ takes one value per x (the group's slope, in units of y per observation). Together with the
+ * x-interval family (Aₙ's intervals are intervals of x, eq. 6) the result does not depend on the order
+ * of tied observations. Without ties this is identical to the observation-node version.
  *
  * Initial width (PLAN.md Known issue 9). The paper uses max Y − min Y on the raw cumulative sums
  * ('raw', matches ftnonpar's pmreg). That depends on the level of y, and since every later width is a
@@ -247,10 +265,13 @@ export function checkKKT(lower, upper, F, opts = {}) {
  *
  * @param {ArrayLike<number>} y  observations ordered by x, n ≥ 2
  * @param {object} [opts]
+ * @param {ArrayLike<number>} [opts.x]  sorted x; with ties, the fit takes one value per x (recommended
+ *     whenever x is known)
  * @param {number} [opts.sigma]     noise scale (default σ̂ of eq. 10)
  * @param {number} [opts.tau=3]     threshold constant
  * @param {number} [opts.lambda=2]  multiresolution scale for the check
- * @param {{lo: number, hi: number}[]} [opts.intervals]  family to check (overrides lambda)
+ * @param {{lo: number, hi: number}[]} [opts.intervals]  family to check (default: x-intervals if x is
+ *     given, else observation-index intervals; overrides lambda)
  * @param {number} [opts.squeeze=0.5]
  * @param {number} [opts.maxIter=200]
  * @param {'centered'|'raw'} [opts.initialWidth='centered']  shift-invariant (default) or the paper's
@@ -262,7 +283,8 @@ export function tautStringRegression(y, opts = {}) {
         throw new RangeError('tautStringRegression needs at least 2 observations');
     const sigma = opts.sigma ?? sigmaMAD(y);
     const tau = opts.tau ?? DEFAULT_TAU;
-    const intervals = opts.intervals ?? multiresolution(n, opts.lambda ?? 2);
+    const lambda = opts.lambda ?? 2;
+    const intervals = opts.intervals ?? (opts.x ? xIntervalFamily(opts.x, lambda) : multiresolution(n, lambda));
     const squeeze = opts.squeeze ?? DEFAULT_SQUEEZE;
     const maxIter = opts.maxIter ?? DEFAULT_MAX_ITER;
     const initialWidth = opts.initialWidth ?? 'centered';
@@ -270,42 +292,55 @@ export function tautStringRegression(y, opts = {}) {
         throw new RangeError(`initialWidth must be 'centered' or 'raw'`);
     const c = threshold(sigma, tau, n);
 
+    // Nodes: between distinct x (start[k] = first observation of group k; start[m] = n). Without x or
+    // ties, start = 0..n and every observation boundary is a node.
+    const start = opts.x ? tieRanges(opts.x).start : Int32Array.from({ length: n + 1 }, (_, i) => i);
+    const m = start.length - 1;
+    const pos = Float64Array.from(start);
+    const group = new Int32Array(n);
+    for (let k = 0; k < m; k++)
+        group.fill(k, start[k], start[k + 1]);
+
     let mean = 0;
     for (let i = 0; i < n; i++)
         mean += y[i];
     mean /= n;
     const yc = Float64Array.from(y, v => v - mean);
-    const Y = prefixSums(yc);
+    const Yobs = prefixSums(yc);
+    const Y = Float64Array.from(start, i => Yobs[i]);
     const offset = initialWidth === 'raw' ? mean : 0; // 'raw' measures the uncentered sums Yᵢ + mean·i
     let yMin = Infinity;
     let yMax = -Infinity;
-    for (let i = 0; i <= n; i++) {
-        const v = Y[i] + offset * i;
+    for (let k = 0; k <= m; k++) {
+        const v = Y[k] + offset * pos[k];
         yMin = Math.min(yMin, v);
         yMax = Math.max(yMax, v);
     }
-    const widths = new Float64Array(n + 1).fill(yMax - yMin);
+    const widths = new Float64Array(m + 1).fill(yMax - yMin);
     widths[0] = 0;
-    widths[n] = 0;
-    const lower = new Float64Array(n + 1);
-    const upper = new Float64Array(n + 1);
-    const marked = new Uint8Array(n);
+    widths[m] = 0;
+    const lower = new Float64Array(m + 1);
+    const upper = new Float64Array(m + 1);
+    const groupMarked = new Uint8Array(m);
     const cover = new Int32Array(n + 1);
+    const fObs = new Float64Array(n);
 
     let iterations = 0;
     let string = null;
     let check = null;
     while (true) {
-        for (let i = 0; i <= n; i++) {
-            lower[i] = Y[i] - widths[i];
-            upper[i] = Y[i] + widths[i];
+        for (let k = 0; k <= m; k++) {
+            lower[k] = Y[k] - widths[k];
+            upper[k] = Y[k] + widths[k];
         }
-        string = tautString(lower, upper);
+        string = tautString(lower, upper, pos);
+        for (let i = 0; i < n; i++)
+            fObs[i] = string.f[group[i]];
         iterations++;
-        check = checkRegion(yc, string.f, intervals, c);
+        check = checkRegion(yc, fObs, intervals, c);
         if (check.ok || iterations >= maxIter)
             break;
-        // Mark observations covered by a violated interval (difference array, O(n + |𝓘|)).
+        // Mark groups with an observation in a violated interval (difference array, O(n + |𝓘|)).
         cover.fill(0);
         for (let k = 0; k < intervals.length; k++) {
             if (check.ratios[k] > 1) {
@@ -313,18 +348,20 @@ export function tautStringRegression(y, opts = {}) {
                 cover[intervals[k].hi + 1]--;
             }
         }
+        groupMarked.fill(0);
         let run = 0;
         for (let i = 0; i < n; i++) {
             run += cover[i];
-            marked[i] = run > 0 ? 1 : 0;
+            if (run > 0)
+                groupMarked[group[i]] = 1;
         }
-        for (let i = 1; i < n; i++) {
-            if (marked[i - 1] || marked[i])
-                widths[i] *= squeeze;
+        for (let k = 1; k < m; k++) {
+            if (groupMarked[k - 1] || groupMarked[k])
+                widths[k] *= squeeze;
         }
     }
-    const f = Float64Array.from(string.f, v => v + mean);
+    const f = Float64Array.from(fObs, v => v + mean);
     return {
-        f, iterations, converged: check.ok, check, widths, lower, upper, F: string.F, sigma, c, intervals,
+        f, iterations, converged: check.ok, check, widths, lower, upper, F: string.F, pos, sigma, c, intervals,
     };
 }

@@ -254,14 +254,14 @@ export function createControls(container, state, onChange) {
 
     let lastColumns = null;
     let lastLevelSizes = null;
-    function sync(st, { columns, equallySpaced = true, kMin = null, n = 0, tau = null, levelSizes = [] }) {
-        const sizesKey = levelSizes.join(',');
+    function sync(st, { columns, equallySpaced = true, kMin = null, n = 0, tau = null, levelLabels = [] }) {
+        const sizesKey = levelLabels.join(',');
         if (sizesKey !== lastLevelSizes) {
             lastLevelSizes = sizesKey;
             boxes.replaceChildren(
                 el('option', { value: 'off', text: 'Off' }),
                 el('option', { value: 'hover', text: 'Row hovered in the residual view' }),
-                ...levelSizes.map((size, k) => el('option', { value: `level:${k}`, text: `Level |I| = ${size}` })),
+                ...levelLabels.map((label, k) => el('option', { value: `level:${k}`, text: `Level: ${label}` })),
                 el('option', { value: 'all', text: 'All levels (faint)' }),
             );
         }

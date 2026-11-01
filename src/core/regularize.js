@@ -4,7 +4,7 @@
 import { tieGroups, totalVariation, supNorm } from './derivatives.js';
 import { buildRegularization } from './lp-build.js';
 import { solveModel } from './lp-solve.js';
-import { multiresolution } from './intervals.js';
+import { xIntervalFamily } from './intervals.js';
 import { threshold, checkRegion } from './region.js';
 import { sigmaMAD } from './sigma.js';
 
@@ -65,7 +65,7 @@ export function regularize(highs, spec) {
     const k = method === 'combined' ? 2 : spec.k;
     const sigma = spec.sigma ?? sigmaMAD(y);
     const tau = spec.tau ?? DEFAULT_TAU;
-    const intervals = spec.intervals ?? multiresolution(n, spec.lambda ?? 2);
+    const intervals = spec.intervals ?? xIntervalFamily(x, spec.lambda ?? 2);
     const c = threshold(sigma, tau, n);
 
     let mean = 0;

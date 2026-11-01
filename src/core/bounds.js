@@ -11,10 +11,12 @@
 //
 // Index conventions: 0-based observations; a segment [lo, hi] is inclusive. Convex and smoothness
 // bounds assume equally spaced x (they use index symmetry and index-linear interpolation); monotone
-// bounds use only the order.
+// bounds use only the order. With tied x (pass opts.x), monotone windows are runs of whole groups of
+// tied observations, so every window is an x-interval of Aₙ (PLAN.md Known issue 14).
 
 import { prefixSums } from './prefix.js';
 import { tieGroups } from './derivatives.js';
+import { tieRanges } from './intervals.js';
 
 const DEFAULT_THETA = 1.5; // PLAN.md §1.7 default grid ratio
 
@@ -51,40 +53,53 @@ function emptyBounds(n) {
 
 // ---------------------------------------------------------------- monotone (eqs. 59–62)
 
-// Non-decreasing g on [lo, hi]: gᵢ ≥ mean(g_{i−k..i}) and gᵢ ≤ mean(g_{i..i+k}), so
-//   lbᵢ = max_k mean(y_{i−k..i}) − c/√(k+1),   ubᵢ = min_k mean(y_{i..i+k}) + c/√(k+1),
+// Non-decreasing g on groups [glo, ghi] of tied observations (group j = observations start[j] ..
+// start[j+1]−1; without ties each group is one observation). g is constant on a group, so
+// g_j ≥ mean of g over groups j−k..j and g_j ≤ mean over groups j..j+k (observation-weighted), giving
+//   lb_j = max_k Σ y / N − c/√N,   ub_j = min_k Σ y / N + c/√N   (N = observations in the window),
 // then monotonized (lb running max forward, ub running min backward). sign = −1 applies this to −y
-// for a non-increasing g.
-function monotoneSegment(S, c, lo, hi, radii, sign, lb, ub) {
-    const rawLb = new Float64Array(hi - lo + 1);
-    const rawUb = new Float64Array(hi - lo + 1);
-    for (let i = lo; i <= hi; i++) {
+// for a non-increasing g. Results are written to every observation of each group.
+function monotoneSegment(S, start, c, glo, ghi, radii, sign, lb, ub) {
+    const len = ghi - glo + 1;
+    const rawLb = new Float64Array(len);
+    const rawUb = new Float64Array(len);
+    for (let j = glo; j <= ghi; j++) {
         let best = -Infinity;
         for (const k of radii) {
-            if (i - k < lo)
+            if (j - k < glo)
                 break;
-            best = Math.max(best, sign * (S[i + 1] - S[i - k]) / (k + 1) - c / Math.sqrt(k + 1));
+            const count = start[j + 1] - start[j - k];
+            best = Math.max(best, sign * (S[start[j + 1]] - S[start[j - k]]) / count - c / Math.sqrt(count));
         }
-        rawLb[i - lo] = best;
+        rawLb[j - glo] = best;
         best = Infinity;
         for (const k of radii) {
-            if (i + k > hi)
+            if (j + k > ghi)
                 break;
-            best = Math.min(best, sign * (S[i + k + 1] - S[i]) / (k + 1) + c / Math.sqrt(k + 1));
+            const count = start[j + k + 1] - start[j];
+            best = Math.min(best, sign * (S[start[j + k + 1]] - S[start[j]]) / count + c / Math.sqrt(count));
         }
-        rawUb[i - lo] = best;
+        rawUb[j - glo] = best;
     }
-    for (let i = 1; i < rawLb.length; i++)
-        rawLb[i] = Math.max(rawLb[i], rawLb[i - 1]);
-    for (let i = rawUb.length - 2; i >= 0; i--)
-        rawUb[i] = Math.min(rawUb[i], rawUb[i + 1]);
-    for (let i = lo; i <= hi; i++) {
+    for (let j = 1; j < len; j++)
+        rawLb[j] = Math.max(rawLb[j], rawLb[j - 1]);
+    for (let j = len - 2; j >= 0; j--)
+        rawUb[j] = Math.min(rawUb[j], rawUb[j + 1]);
+    for (let j = glo; j <= ghi; j++) {
         // for sign = −1 the bounds on −g flip into bounds on g
-        const l = sign > 0 ? rawLb[i - lo] : -rawUb[i - lo];
-        const u = sign > 0 ? rawUb[i - lo] : -rawLb[i - lo];
-        lb[i] = Math.max(lb[i], l);
-        ub[i] = Math.min(ub[i], u);
+        const l = sign > 0 ? rawLb[j - glo] : -rawUb[j - glo];
+        const u = sign > 0 ? rawUb[j - glo] : -rawLb[j - glo];
+        for (let i = start[j]; i < start[j + 1]; i++) {
+            lb[i] = Math.max(lb[i], l);
+            ub[i] = Math.min(ub[i], u);
+        }
     }
+}
+
+function groupsOf(n, x) {
+    if (x)
+        return tieRanges(x);
+    return { start: Int32Array.from({ length: n + 1 }, (_, i) => i), m: n, ties: false };
 }
 
 /**
@@ -92,65 +107,78 @@ function monotoneSegment(S, c, lo, hi, radii, sign, lb, ub) {
  *
  * @param {ArrayLike<number>} y  observations ordered by x
  * @param {number} c             threshold σ√(τ log n), units of y
- * @param {{direction?: 1|-1, theta?: number, full?: boolean}} [opts]  direction +1 non-decreasing
- *     (default), −1 non-increasing; full = every radius (O(n²) reference)
+ * @param {{direction?: 1|-1, theta?: number, full?: boolean, x?: ArrayLike<number>}} [opts]
+ *     direction +1 non-decreasing (default), −1 non-increasing; full = every radius (O(n²) reference);
+ *     x = sorted x, so windows never split tied observations
  * @returns {{lb: Float64Array, ub: Float64Array}}
  */
 export function monotoneBounds(y, c, opts = {}) {
     const n = y.length;
     const S = prefixSums(y);
-    const radii = opts.full ? allRadii(n - 1) : windowRadii(opts.theta ?? DEFAULT_THETA, n - 1, 1);
+    const { start, m } = groupsOf(n, opts.x);
+    const radii = opts.full ? allRadii(m - 1) : windowRadii(opts.theta ?? DEFAULT_THETA, m - 1, 1);
     const out = emptyBounds(n);
-    monotoneSegment(S, c, 0, n - 1, radii, opts.direction ?? 1, out.lb, out.ub);
+    monotoneSegment(S, start, c, 0, m - 1, radii, opts.direction ?? 1, out.lb, out.ub);
     return out;
 }
 
 /**
  * Bounds for a piecewise monotone g with local extremes at given positions (§5.2.3): monotone
  * bounds on each segment between consecutive extremes, windows restricted to the segment. An extreme
- * belongs to both neighboring segments, where both sets of bounds apply.
+ * belongs to both neighboring segments, where both sets of bounds apply. With x given, positions are
+ * taken at the group of tied observations they fall in.
  *
  * @param {ArrayLike<number>} y
  * @param {number} c
  * @param {Array<{type: 'max'|'min', position: number}>} extremes  ordered by position (0-based index)
- * @param {{theta?: number, full?: boolean, direction?: 1|-1|0}} [opts]  direction is used only when
- *     there are no extremes: ±1 monotone that way, 0 (default) either way (union of both bands)
+ * @param {{theta?: number, full?: boolean, direction?: 1|-1|0, x?: ArrayLike<number>}} [opts]
+ *     direction is used only when there are no extremes: ±1 monotone that way, 0 (default) either way
+ *     (union of both bands)
  * @returns {{lb: Float64Array, ub: Float64Array, segments: Array<{lo: number, hi: number, direction: 1|-1}>}}
+ *     segments in observation indices: lo = first observation of the start group, hi = first
+ *     observation of the end group (src/core/exact.js constrains the steps lo..hi−1)
  */
 export function piecewiseMonotoneBounds(y, c, extremes, opts = {}) {
     const n = y.length;
     const S = prefixSums(y);
-    const radii = opts.full ? allRadii(n - 1) : windowRadii(opts.theta ?? DEFAULT_THETA, n - 1, 1);
+    const { start, m } = groupsOf(n, opts.x);
+    const radii = opts.full ? allRadii(m - 1) : windowRadii(opts.theta ?? DEFAULT_THETA, m - 1, 1);
     if (extremes.length === 0) {
         const dir = opts.direction ?? 0;
         if (dir !== 0) {
             const out = emptyBounds(n);
-            monotoneSegment(S, c, 0, n - 1, radii, dir, out.lb, out.ub);
+            monotoneSegment(S, start, c, 0, m - 1, radii, dir, out.lb, out.ub);
             return { ...out, segments: [{ lo: 0, hi: n - 1, direction: dir }] };
         }
         const up = emptyBounds(n);
         const down = emptyBounds(n);
-        monotoneSegment(S, c, 0, n - 1, radii, 1, up.lb, up.ub);
-        monotoneSegment(S, c, 0, n - 1, radii, -1, down.lb, down.ub);
+        monotoneSegment(S, start, c, 0, m - 1, radii, 1, up.lb, up.ub);
+        monotoneSegment(S, start, c, 0, m - 1, radii, -1, down.lb, down.ub);
         const lb = Float64Array.from(up.lb, (v, i) => Math.min(v, down.lb[i]));
         const ub = Float64Array.from(up.ub, (v, i) => Math.max(v, down.ub[i]));
         return { lb, ub, segments: [] };
     }
-    const cuts = [0, ...extremes.map(e => e.position), n - 1];
+    const groupOf = new Int32Array(n);
+    for (let j = 0; j < m; j++)
+        groupOf.fill(j, start[j], start[j + 1]);
+    const cuts = [0, ...extremes.map(e => groupOf[e.position]), m - 1];
     const segments = [];
-    for (let s = 0; s + 1 < cuts.length; s++) {
-        const lo = cuts[s];
-        const hi = cuts[s + 1];
+    const groupSegments = [];
+    for (let sIdx = 0; sIdx + 1 < cuts.length; sIdx++) {
+        const glo = cuts[sIdx];
+        const ghi = cuts[sIdx + 1];
         // the segment ending at a max rises; the one starting after a max falls
-        const direction = s < extremes.length
-            ? (extremes[s].type === 'max' ? 1 : -1)
-            : (extremes[s - 1].type === 'max' ? -1 : 1);
-        if (hi >= lo)
-            segments.push({ lo, hi, direction });
+        const direction = sIdx < extremes.length
+            ? (extremes[sIdx].type === 'max' ? 1 : -1)
+            : (extremes[sIdx - 1].type === 'max' ? -1 : 1);
+        if (ghi >= glo) {
+            groupSegments.push({ glo, ghi, direction });
+            segments.push({ lo: start[glo], hi: start[ghi], direction });
+        }
     }
     const out = emptyBounds(n);
-    for (const seg of segments)
-        monotoneSegment(S, c, seg.lo, seg.hi, radii, seg.direction, out.lb, out.ub);
+    for (const seg of groupSegments)
+        monotoneSegment(S, start, c, seg.glo, seg.ghi, radii, seg.direction, out.lb, out.ub);
     return { ...out, segments };
 }
 

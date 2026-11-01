@@ -9,7 +9,7 @@ import * as d3 from 'd3';
 import { SIGNALS, simulate } from '../core/signals.js';
 import { parseTable, prepareXY, rowIndex } from '../core/data.js';
 import { sigmaMAD, sigmaGSJS } from '../core/sigma.js';
-import { multiresolution, multiresolutionLevels } from '../core/intervals.js';
+import { multiresolutionLevels, xIntervalFamily, xIntervalLevels, tieRanges } from '../core/intervals.js';
 import { threshold, checkRegion, constraintBoxes } from '../core/region.js';
 import { tautStringRegression } from '../core/tautstring.js';
 import { localExtremes, stepSigns } from '../core/extremes.js';
@@ -113,8 +113,11 @@ function deriveData(st) {
         equallySpaced = d.equallySpaced;
         if (d.dropped)
             notes.push(`${fmtInt(d.dropped)} incomplete row(s) dropped`);
-        if (d.ties)
-            notes.push(`${fmtInt(d.ties)} tied x value(s); smooth fits take one value per x`);
+        if (d.ties) {
+            notes.push(`${fmtInt(d.ties)} observations share an x with another: Aₙ uses intervals of x (eq. 6), `
+                + 'so tied observations are always kept together, and every fit takes one value per x. '
+                + 'σ̂ still depends on the order of tied rows.');
+        }
         notes.push(d.equallySpaced ? 'x equally spaced' : 'x unequally spaced (Aₙ uses only the order)');
     }
     else {
@@ -129,7 +132,7 @@ function deriveData(st) {
     const n = y.length;
     if (n < 2)
         return { error: 'Need at least 2 complete observations.', columns };
-    return { columns, notes, x, y, f, n, dataKey, equallySpaced };
+    return { columns, notes, x, y, f, n, dataKey, equallySpaced, ties: tieRanges(x).ties };
 }
 
 /**
@@ -150,9 +153,12 @@ function deriveBase(st, data, tauInfo) {
     const sigmaUsed = st.sigmaFixed ?? (useRobust ? sigmaRobust : sigmaHat);
     const warnings = sigmaWarnings(st, n, sigmaHat, sigmaRobust, useRobust);
     const c = threshold(sigmaUsed, tau, n);
-    const family = multiresolution(n, st.lambda);
-    const levels = multiresolutionLevels(n, st.lambda);
-    const taut = tautStringRegression(y, { sigma: sigmaUsed, tau, intervals: family });
+    // Intervals of x (eq. 6): built on the distinct x values, so tied observations are never separated.
+    const family = xIntervalFamily(x, st.lambda);
+    const levels = xIntervalLevels(x, st.lambda);
+    const groups = tieRanges(x);
+    const levelSizes = multiresolutionLevels(groups.m, st.lambda).map(level => level[0].hi - level[0].lo + 1);
+    const taut = tautStringRegression(y, { x, sigma: sigmaUsed, tau, intervals: family });
     const tautExt = localExtremes(taut.f);
     const regionKey = `${dataKey}|${sigmaUsed}|${tau}|${st.lambda}`;
     const h = (x[n - 1] - x[0]) / (n - 1); // spacing, meaningful when equallySpaced
@@ -160,7 +166,7 @@ function deriveBase(st, data, tauInfo) {
     // K_min costs O(n·|grid|²); only the smoothness band needs it.
     const kMin = equallySpaced && st.band === 'smooth' ? smoothnessKMin(y, c, h, { theta: st.theta }) : null;
     return {
-        columns, notes, warnings, x, y, f, n, sigmaHat, sigmaRobust, useRobust, sigmaUsed, tau, tauInfo, c, family, levels, taut, tautExt, regionKey,
+        columns, notes, warnings, x, y, f, n, ties: groups.ties, levelSizes, sigmaHat, sigmaRobust, useRobust, sigmaUsed, tau, tauInfo, c, family, levels, taut, tautExt, regionKey,
         equallySpaced, h, kMin, edges: cellEdges(x),
     };
 }
@@ -218,12 +224,12 @@ function computeBand(base, st, getFit) {
     let shape = null; // the same assumption for exact LP bounds (src/core/exact.js), when expressible
     if (st.band === 'monoUp' || st.band === 'monoDown') {
         const direction = st.band === 'monoUp' ? 1 : -1;
-        b = monotoneBounds(y, c, { direction, theta });
+        b = monotoneBounds(y, c, { direction, theta, x: base.x });
         shape = { type: 'monotone', direction };
     }
     else if (st.band === 'pwMono') {
         const extremes = base.tautExt.extremes.map(e => ({ type: e.type, position: Math.floor((e.start + e.end) / 2) }));
-        b = piecewiseMonotoneBounds(y, c, extremes, { theta });
+        b = piecewiseMonotoneBounds(y, c, extremes, { theta, x: base.x });
         extra = extremes.length ? `${extremes.length} extreme position(s) from the taut string`
             : 'taut string has no extremes: monotone in either direction';
         // "monotone either way" is a union of two regions, not one LP
@@ -504,8 +510,8 @@ function startup() {
     function calibKey(data) {
         const fam = state.calibFamily === 'all' ? 'all' : `λ${state.lambda}`;
         const est = calibEstimator();
-        // GSJS depends on the design x, so its calibration is specific to the data's x
-        const design = est === 'gsjs' ? `|${data.dataKey}` : '';
+        // GSJS and tied x (the family is over the distinct x) make the calibration specific to the data's x
+        const design = est === 'gsjs' || data.ties ? `|${data.dataKey}` : '';
         return `${data.n}|${fam}|${est}${design}|${CALIBRATION_B}|${CALIBRATION_SEED}`;
     }
 
@@ -609,8 +615,11 @@ function startup() {
         if (state.boxes === 'all')
             return 'Aₙ boxes, all levels';
         const k = Number(state.boxes.split(':')[1]);
-        const first = base.levels[k]?.[0];
-        return first ? `Aₙ boxes, |I| = ${first.hi - first.lo + 1}: fit mean (tick) must lie in each box` : null;
+        const size = base.levelSizes[k];
+        if (size === undefined)
+            return null;
+        const what = base.ties ? `${size} distinct x per box` : `|I| = ${size}`;
+        return `Aₙ boxes, ${what}: fit mean (tick) must lie in each box`;
     }
 
     function applyBoxes() {
@@ -654,7 +663,7 @@ function startup() {
             boxesLabel: boxesLabel() });
         applyBoxes();
         residual.render({ x: base.x, edges: base.edges, levels: base.levels, w: primary.w, ratios: primary.ratios,
-            limit: primary.limit });
+            limit: primary.limit, rowLabels: base.levelSizes.map(String), rowTitle: base.ties ? '#x' : '|I|' });
     }
 
     function update() {
@@ -683,7 +692,8 @@ function startup() {
         controls.sync(state, {
             columns: base.columns, equallySpaced: base.equallySpaced ?? true, kMin: base.kMin ?? null,
             n: base.n ?? 0, tau: base.tau ?? null,
-            levelSizes: base.levels ? base.levels.map(level => level[0].hi - level[0].lo + 1) : [],
+            levelLabels: base.levelSizes
+                ? base.levelSizes.map(size => (base.ties ? `${size} distinct x per box` : `|I| = ${size}`)) : [],
         });
         charts.classList.toggle('empty', Boolean(base.error));
         if (base.error) {

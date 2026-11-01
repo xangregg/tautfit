@@ -157,6 +157,11 @@ export function createMainChart(container) {
             lo = Math.min(lo, d3.min(f));
             hi = Math.max(hi, d3.max(f));
         }
+        // fits can leave the data's range (e.g. a smooth fit extrapolating below 0); never clip them away
+        for (const fit of m.fits) {
+            lo = Math.min(lo, d3.min(fit.g));
+            hi = Math.max(hi, d3.max(fit.g));
+        }
         sy = d3.scaleLinear().domain([lo, hi]).nice().range([HEIGHT - MARGIN.bottom, MARGIN.top]);
 
         svg.attr('width', width);

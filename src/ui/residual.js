@@ -78,12 +78,14 @@ export function createResidualView(container, { onHover }) {
             .attr('width', width - MARGIN.left - MARGIN.right).attr('height', rows * ROW_H);
         gAxisX.attr('transform', `translate(0,${MARGIN.top + rows * ROW_H})`)
             .call(d3.axisBottom(sx).ticks(width / 90).tickSizeOuter(0));
-        // Row labels: interval length of the row's first cell (exact for λ = 2 except a short last cell).
+        // Row labels: size of the row's first cell (exact for λ = 2 except a short last cell), in
+        // observations, or in distinct x values when x has ties (m.rowLabels).
         const sy = d3.scaleBand().domain(d3.range(rows)).range([MARGIN.top, MARGIN.top + rows * ROW_H]);
         gAxisY.attr('transform', `translate(${MARGIN.left},0)`)
             .call(d3.axisLeft(sy).tickSize(0).tickPadding(6)
-                .tickFormat(k => String(m.levels[k][0].hi - m.levels[k][0].lo + 1)));
+                .tickFormat(k => m.rowLabels?.[k] ?? String(m.levels[k][0].hi - m.levels[k][0].lo + 1)));
         gAxisY.select('.domain').remove();
+        yTitle.text(m.rowTitle ?? '|I|');
         yTitle.attr('x', 4).attr('y', MARGIN.top + rows * ROW_H / 2).attr('dy', '0.32em');
 
         const ctx = sizeCanvas(canvas, width, height);
