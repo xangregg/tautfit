@@ -63,7 +63,7 @@ export function regularize(highs, spec) {
     const method = spec.method;
     const objective = method === 'combined' ? 'minTV' : method;
     const k = method === 'combined' ? 2 : spec.k;
-    const sigma = spec.sigma ?? sigmaMAD(y);
+    const sigma = spec.sigma ?? sigmaMAD(y, x);
     const tau = spec.tau ?? DEFAULT_TAU;
     const intervals = spec.intervals ?? xIntervalFamily(x, spec.lambda ?? 2);
     const c = threshold(sigma, tau, n);

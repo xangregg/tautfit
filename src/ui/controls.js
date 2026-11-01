@@ -174,6 +174,7 @@ export function createControls(container, state, onChange) {
         el('option', { value: 'gsjs', text: 'local linear residuals (GSJS), trend-robust' }),
     ]);
     sigmaMethod.value = state.sigmaMethod;
+    const sigmaHint = el('span', { class: 'field-hint' });
     sigmaMethod.addEventListener('change', () => onChange({ sigmaMethod: sigmaMethod.value }));
     sigmaFixed.addEventListener('change', sendSigmaFixed);
     sigmaFixedValue.addEventListener('input', sendSigmaFixed);
@@ -236,7 +237,7 @@ export function createControls(container, state, onChange) {
         calBox,
         tauValue,
         field('λ', lambdaInput, 'interval family scale; 2 = dyadic'),
-        field('σ estimate', sigmaMethod, 'GSJS: a locally linear trend cancels; eq. 10 is the paper’s default'),
+        el('label', { class: 'field' }, [el('span', { class: 'field-label', text: 'σ estimate' }), sigmaMethod, sigmaHint]),
         el('label', { class: 'check' }, [sigmaFixed, ' fix σ instead of estimating it']),
         sigmaFixedValue,
         field('Aₙ boxes on the chart', boxes, 'each box: where the fit’s mean over its x-span must lie (eq. 7)'),
@@ -254,7 +255,11 @@ export function createControls(container, state, onChange) {
 
     let lastColumns = null;
     let lastLevelSizes = null;
-    function sync(st, { columns, equallySpaced = true, kMin = null, n = 0, tau = null, levelLabels = [] }) {
+    function sync(st, { columns, equallySpaced = true, kMin = null, n = 0, tau = null, levelLabels = [], pureErrorOnly = false }) {
+        sigmaMethod.disabled = pureErrorOnly;
+        sigmaHint.textContent = pureErrorOnly
+            ? 'enough tied x: both estimates use the spread within tied x (pure error)'
+            : 'GSJS: a locally linear trend cancels; eq. 10 is the paper’s default';
         const sizesKey = levelLabels.join(',');
         if (sizesKey !== lastLevelSizes) {
             lastLevelSizes = sizesKey;

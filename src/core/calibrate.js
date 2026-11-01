@@ -106,12 +106,14 @@ export function coverageOfTau(sorted, tau, n) {
  * The σ̂ plug-in for calibration matching the procedure's own estimator.
  *
  * @param {'diff'|'gsjs'|'none'} kind  eq. (10), GSJS on the design x, or σ known
- * @param {ArrayLike<number>} [x]      design points (needed for 'gsjs')
+ * @param {ArrayLike<number>} [x]      design points (needed for 'gsjs'; with ties, also used by 'diff')
  * @returns {boolean|function(ArrayLike<number>): number}
  */
 export function sigmaPlugIn(kind, x) {
     if (kind === 'gsjs')
         return z => sigmaGSJS(x, z);
-    return kind === 'diff';
+    if (kind === 'diff')
+        return x ? (z => sigmaMAD(z, x)) : true; // tie-aware when x is known
+    return false;
 }
 

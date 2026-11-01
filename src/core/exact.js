@@ -43,7 +43,7 @@ export function exactBounds(highs, spec, onProgress) {
     const x = Float64Array.from(spec.x);
     const y = Float64Array.from(spec.y);
     const n = y.length;
-    const sigma = spec.sigma ?? sigmaMAD(y);
+    const sigma = spec.sigma ?? sigmaMAD(y, x);
     const tau = spec.tau ?? DEFAULT_TAU;
     const intervals = spec.intervals ?? xIntervalFamily(x, spec.lambda ?? 2);
     const c = threshold(sigma, tau, n);

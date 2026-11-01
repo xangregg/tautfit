@@ -8,7 +8,7 @@
 import * as d3 from 'd3';
 import { SIGNALS, simulate } from '../core/signals.js';
 import { parseTable, prepareXY, rowIndex } from '../core/data.js';
-import { sigmaMAD, sigmaGSJS } from '../core/sigma.js';
+import { sigmaMAD, sigmaGSJS, replicateInfo } from '../core/sigma.js';
 import { multiresolutionLevels, xIntervalFamily, xIntervalLevels, tieRanges } from '../core/intervals.js';
 import { threshold, checkRegion, constraintBoxes } from '../core/region.js';
 import { tautStringRegression } from '../core/tautstring.js';
@@ -115,8 +115,7 @@ function deriveData(st) {
             notes.push(`${fmtInt(d.dropped)} incomplete row(s) dropped`);
         if (d.ties) {
             notes.push(`${fmtInt(d.ties)} observations share an x with another: Aₙ uses intervals of x (eq. 6), `
-                + 'so tied observations are always kept together, and every fit takes one value per x. '
-                + 'σ̂ still depends on the order of tied rows.');
+                + 'so tied observations are always kept together, and every fit takes one value per x.');
         }
         notes.push(d.equallySpaced ? 'x equally spaced' : 'x unequally spaced (Aₙ uses only the order)');
     }
@@ -141,7 +140,8 @@ function deriveData(st) {
 function deriveBase(st, data, tauInfo) {
     const { columns, notes, x, y, f, n, dataKey, equallySpaced } = data;
     const tau = tauInfo.tau;
-    const sigmaHat = sigmaMAD(y);
+    const sigmaHat = sigmaMAD(y, x);
+    const replicates = replicateInfo(x);
     let sigmaRobust = NaN;
     try {
         sigmaRobust = sigmaGSJS(x, y);
@@ -151,7 +151,7 @@ function deriveBase(st, data, tauInfo) {
     }
     const useRobust = st.sigmaMethod === 'gsjs' && Number.isFinite(sigmaRobust);
     const sigmaUsed = st.sigmaFixed ?? (useRobust ? sigmaRobust : sigmaHat);
-    const warnings = sigmaWarnings(st, n, sigmaHat, sigmaRobust, useRobust);
+    const warnings = sigmaWarnings(st, n, sigmaHat, sigmaRobust, useRobust, replicates);
     const c = threshold(sigmaUsed, tau, n);
     // Intervals of x (eq. 6): built on the distinct x values, so tied observations are never separated.
     const family = xIntervalFamily(x, st.lambda);
@@ -166,7 +166,7 @@ function deriveBase(st, data, tauInfo) {
     // K_min costs O(n·|grid|²); only the smoothness band needs it.
     const kMin = equallySpaced && st.band === 'smooth' ? smoothnessKMin(y, c, h, { theta: st.theta }) : null;
     return {
-        columns, notes, warnings, x, y, f, n, ties: groups.ties, levelSizes, sigmaHat, sigmaRobust, useRobust, sigmaUsed, tau, tauInfo, c, family, levels, taut, tautExt, regionKey,
+        columns, notes, warnings, x, y, f, n, ties: groups.ties, levelSizes, replicates, sigmaHat, sigmaRobust, useRobust, sigmaUsed, tau, tauInfo, c, family, levels, taut, tautExt, regionKey,
         equallySpaced, h, kMin, edges: cellEdges(x),
     };
 }
@@ -174,12 +174,13 @@ function deriveBase(st, data, tauInfo) {
 /**
  * Warnings about the noise scale, which sets c and hence how loose Aₙ is.
  */
-function sigmaWarnings(st, n, sigmaHat, sigmaRobust, useRobust) {
+function sigmaWarnings(st, n, sigmaHat, sigmaRobust, useRobust, replicates) {
     const out = [];
     if (n < SMALL_N) {
         const source = st.sigmaFixed !== null ? 'σ is fixed'
-            : useRobust ? `GSJS σ̂ comes from only ${n - 2} pseudo-residuals`
-                : `σ̂ comes from only ${n - 1} differences`;
+            : replicates.pureErrorOnly ? `σ̂ comes from only ${replicates.df} replicate degrees of freedom`
+                : useRobust ? `GSJS σ̂ comes from only ${n - 2} pseudo-residuals`
+                    : `σ̂ comes from only ${n - 1} differences`;
         out.push(`Small n (${n}): ${source}, and τ = 3 targets n ≥ 500; at small n it can cover far less than 95% `
             + '(e.g. 76% at n = 10 with GSJS σ̂). Calibrate τ for this n, and fix σ if you know the noise level.');
     }
@@ -335,10 +336,19 @@ function readoutRows(base, fit, st) {
     const add = (label, value, title) => rows.push({ label, value, title });
     add('n', fmtInt(base.n));
     const inUse = which => (st.sigmaFixed === null && which ? ' · used' : '');
-    add('σ̂ (eq. 10)', fmt(base.sigmaHat), `median |Δy| / (Φ⁻¹(0.75)·√2)${inUse(!base.useRobust)}`);
-    if (Number.isFinite(base.sigmaRobust)) {
-        add('σ̂ (GSJS)', fmt(base.sigmaRobust),
-            `median local linear residual, trend-robust (Gasser et al. 1986)${inUse(base.useRobust)}`);
+    const rep = base.replicates;
+    if (rep.pureErrorOnly) {
+        // both estimators reduce to the same pure-error estimate
+        add('σ̂', fmt(base.sigmaHat),
+            `spread within tied x (pure error, ${rep.df} df), robust; no trend enters${inUse(true)}`);
+    }
+    else {
+        const tied = rep.df > 0 ? `, pooled with the spread within tied x (${rep.df} df)` : '';
+        add('σ̂ (eq. 10)', fmt(base.sigmaHat), `median |Δy| / (Φ⁻¹(0.75)·√2)${tied}${inUse(!base.useRobust)}`);
+        if (Number.isFinite(base.sigmaRobust)) {
+            add('σ̂ (GSJS)', fmt(base.sigmaRobust),
+                `median local linear residual, trend-robust (Gasser et al. 1986)${tied}${inUse(base.useRobust)}`);
+        }
     }
     if (base.f)
         add('true σ', fmt(st.sigma));
@@ -691,7 +701,7 @@ function startup() {
         }
         controls.sync(state, {
             columns: base.columns, equallySpaced: base.equallySpaced ?? true, kMin: base.kMin ?? null,
-            n: base.n ?? 0, tau: base.tau ?? null,
+            n: base.n ?? 0, tau: base.tau ?? null, pureErrorOnly: base.replicates?.pureErrorOnly ?? false,
             levelLabels: base.levelSizes
                 ? base.levelSizes.map(size => (base.ties ? `${size} distinct x per box` : `|I| = ${size}`)) : [],
         });

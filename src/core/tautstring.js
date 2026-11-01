@@ -267,7 +267,7 @@ export function checkKKT(lower, upper, F, opts = {}) {
  * @param {object} [opts]
  * @param {ArrayLike<number>} [opts.x]  sorted x; with ties, the fit takes one value per x (recommended
  *     whenever x is known)
- * @param {number} [opts.sigma]     noise scale (default σ̂ of eq. 10)
+ * @param {number} [opts.sigma]     noise scale (default σ̂ of eq. 10, tie-aware when x is given)
  * @param {number} [opts.tau=3]     threshold constant
  * @param {number} [opts.lambda=2]  multiresolution scale for the check
  * @param {{lo: number, hi: number}[]} [opts.intervals]  family to check (default: x-intervals if x is
@@ -281,7 +281,7 @@ export function tautStringRegression(y, opts = {}) {
     const n = y.length;
     if (n < 2)
         throw new RangeError('tautStringRegression needs at least 2 observations');
-    const sigma = opts.sigma ?? sigmaMAD(y);
+    const sigma = opts.sigma ?? sigmaMAD(y, opts.x);
     const tau = opts.tau ?? DEFAULT_TAU;
     const lambda = opts.lambda ?? 2;
     const intervals = opts.intervals ?? (opts.x ? xIntervalFamily(opts.x, lambda) : multiresolution(n, lambda));

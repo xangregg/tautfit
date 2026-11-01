@@ -39,6 +39,20 @@ function groupSpread(x, g) {
 
 const strip = fam => fam.map(({ lo, hi, level }) => [lo, hi, level]);
 
+// Shuffle y within each group of tied x (Fisher–Yates per group).
+function shuffleTies(x, y, seed) {
+    const rng = createRng(seed);
+    const out = Float64Array.from(y);
+    const { start, m } = tieRanges(x);
+    for (let j = 0; j < m; j++) {
+        for (let i = start[j + 1] - 1; i > start[j]; i--) {
+            const k = start[j] + Math.floor(rng.uniform() * (i - start[j] + 1));
+            [out[i], out[k]] = [out[k], out[i]];
+        }
+    }
+    return out;
+}
+
 test('without ties the x-interval families equal the observation-index families', () => {
     for (const n of [7, 64, 100]) {
         const x = Float64Array.from({ length: n }, (_, i) => i * 0.3);
@@ -101,18 +115,11 @@ test('passing x without ties changes nothing (bitwise)', () => {
     assert.deepEqual(tautStringRegression(y, { x }).f, tautStringRegression(y).f);
 });
 
-test('nothing depends on the order of tied rows (fixed σ, since σ̂ itself is order-dependent)', () => {
+test('nothing depends on the order of tied rows, including the default σ̂', () => {
     const { x, y } = agesData();
-    const sigma = 3;
-    const rng = createRng(5);
-    const shuffled = Float64Array.from(y);
-    const { start, m } = tieRanges(x);
-    for (let j = 0; j < m; j++) {
-        for (let i = start[j + 1] - 1; i > start[j]; i--) {
-            const k = start[j] + Math.floor(rng.uniform() * (i - start[j] + 1));
-            [shuffled[i], shuffled[k]] = [shuffled[k], shuffled[i]];
-        }
-    }
+    assert.equal(sigmaMAD(y, x), sigmaMAD(shuffleTies(x, y, 5), x));
+    const sigma = undefined; // default, tie-aware σ̂
+    const shuffled = shuffleTies(x, y, 5);
     const a = tautStringRegression(y, { x, sigma });
     const b = tautStringRegression(shuffled, { x, sigma });
     for (let i = 0; i < y.length; i++)

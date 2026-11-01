@@ -26,6 +26,14 @@ Readout warnings: n < 50; σ̂(eq. 10)/σ̂(GSJS) > 1 + 4/√n (≈ 1% false ala
 pure noise). Calibration plugs in the estimator actually used (none when σ is fixed). At n = 10 with GSJS σ̂ the
 calibrated τ is 8.7, i.e. τ = 3 covers only 76%.
 
+*Tied x (after Known issue 14):* both estimators are order-free when x has ties. Pseudo-residuals: pure error
+(yᵢ − ȳ_j)·√(k_j/(k_j−1)) within each replicated x (weight (k_j−1)/k_j, i.e. k_j−1 df per group) plus between-x
+terms on the x-means (eq. 10: (ȳ_{j+1} − ȳ_j)/√(1/k_j + 1/k_{j+1}); GSJS: sd-scaled local linear residual of the
+means), weighted median / Φ⁻¹(0.75). If the replicate df ≥ the number of between-x terms, the between-x terms are
+dropped (they only add trend bias). Measured, σ = 1: steep trend with 1–4 replicates, row-order eq. 10 1.63, tie-aware
+0.99; pure noise 0.99–1.00; 5% ties ≈ eq. 10. The user's age data (101 rows, 30 ages): row-order eq. 10 ranged
+2.62–4.19 over shuffles of tied rows; tie-aware 3.145 for every order. Without ties both are exactly as before.
+
 ### 1.2 Interval family 𝓘ₙ (eq. 9, appendix 7.3)
 
 Multiresolution scheme with parameter λ > 1 (default λ = 2 → dyadic blocks). Using 1-based indices,
