@@ -27,6 +27,15 @@ const fmt = d3.format('.4~g');
  * @property {Float64Array} edges   cell edges (layout.cellEdges)
  * @property {{lb: Float64Array, ub: Float64Array, label: string}|null} band  pointwise confidence band
  * @property {{lb: Float64Array, ub: Float64Array, label: string}|null} [exact]  exact LP bounds, dashed
+ * @property {string|null} [boxesLabel]  legend text for the Aₙ boxes layer (null: no legend item)
+ */
+
+/**
+ * @typedef {object} BoxesSpec  Aₙ constraint boxes to draw (see region.constraintBoxes)
+ * @property {Array<{boxes: import('../core/region.js').ConstraintBoxes, emphasize: number}>} levels
+ * @property {boolean} faint     outlines only, no fit ticks (for many levels at once)
+ * @property {number} limit      ratio above which a box is violated
+ * @property {string} fitColorVar  CSS custom property for the fit-mean ticks
  */
 
 /**
@@ -49,6 +58,7 @@ export function createMainChart(container) {
     const legend = d3.select(container).append('div').attr('class', 'legend');
     const plot = d3.select(container).append('div').attr('class', 'plot').style('height', `${HEIGHT}px`);
     const canvas = plot.append('canvas').node();
+    const boxCanvas = plot.append('canvas').node(); // Aₙ boxes: above the points, below the lines
     const svg = plot.append('svg').attr('height', HEIGHT);
     const clipId = `plot-clip-${Math.random().toString(36).slice(2)}`;
     const clipRect = svg.append('clipPath').attr('id', clipId).append('rect');
@@ -68,6 +78,62 @@ export function createMainChart(container) {
     let model = null;
     let sx = null;
     let sy = null;
+    let width = 0;
+    let boxSpec = null;
+
+    // Each box spans its interval's cells horizontally and mean_I(y) ± c/√|I| vertically; the tick is
+    // the fit's mean over the interval. A tick outside its box is a violated constraint.
+    function drawBoxes() {
+        const ctx = sizeCanvas(boxCanvas, width, HEIGHT);
+        ctx.clearRect(0, 0, width, HEIGHT);
+        if (!boxSpec || !model)
+            return;
+        const colors = themeColors();
+        const tickColor = cssColor(boxSpec.fitColorVar);
+        const edges = model.edges;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(MARGIN.left, MARGIN.top, width - MARGIN.left - MARGIN.right, HEIGHT - MARGIN.top - MARGIN.bottom);
+        ctx.clip();
+        for (const { boxes, emphasize } of boxSpec.levels) {
+            for (let k = 0; k < boxes.lo.length; k++) {
+                const x0 = sx(edges[boxes.lo[k]]);
+                const x1 = sx(edges[boxes.hi[k] + 1]);
+                const top = sy(boxes.yMean[k] + boxes.half[k]);
+                const bottom = sy(boxes.yMean[k] - boxes.half[k]);
+                const violated = boxes.ratios[k] > boxSpec.limit;
+                const w = Math.max(1, x1 - x0);
+                ctx.globalAlpha = violated ? 0.18 : boxSpec.faint ? 0 : 0.07;
+                ctx.fillStyle = violated ? colors.violation : colors.ink;
+                ctx.fillRect(x0, top, w, bottom - top);
+                ctx.globalAlpha = violated ? 0.9 : boxSpec.faint ? 0.12 : 0.55;
+                ctx.strokeStyle = violated ? colors.violation : colors['ink-2'];
+                ctx.lineWidth = k === emphasize ? 2 : 1;
+                ctx.strokeRect(x0 + 0.5, top + 0.5, Math.max(0, w - 1), bottom - top);
+                if (!boxSpec.faint) {
+                    ctx.globalAlpha = 1;
+                    ctx.strokeStyle = violated ? colors.violation : tickColor;
+                    ctx.lineWidth = k === emphasize ? 3 : 2;
+                    const yv = sy(boxes.gMean[k]);
+                    ctx.beginPath();
+                    ctx.moveTo(x0, yv);
+                    ctx.lineTo(x0 + w, yv);
+                    ctx.stroke();
+                }
+            }
+        }
+        ctx.restore();
+    }
+
+    /**
+     * Show or clear Aₙ constraint boxes without redrawing the rest of the chart (cheap on hover).
+     *
+     * @param {BoxesSpec|null} spec
+     */
+    function setBoxes(spec) {
+        boxSpec = spec;
+        drawBoxes();
+    }
 
     function render(m) {
         model = m;
@@ -75,7 +141,7 @@ export function createMainChart(container) {
         cross.attr('visibility', 'hidden');
         gHighlight.attr('visibility', 'hidden');
         hideTooltip();
-        const width = container.clientWidth;
+        width = container.clientWidth;
         const colors = themeColors();
         const { x, y, f, edges } = m;
         const n = x.length;
@@ -190,6 +256,8 @@ export function createMainChart(container) {
             items.push({ label: m.band.label, color: colors['band'], box: true });
         if (m.band && m.exact)
             items.push({ label: m.exact.label, color: colors.ink, glyph: '┄' });
+        if (m.boxesLabel)
+            items.push({ label: m.boxesLabel, color: colors['ink-2'], glyph: '▭' });
         if (shown.length)
             items.push({ label: 'local max / min plateau', color: colors.ink, glyph: '▲▼' });
         else if (m.extremes.length)
@@ -208,6 +276,7 @@ export function createMainChart(container) {
                 .style('background', d => (d.glyph ? 'none' : d.color))
                 .style('color', d => d.color))
             .call(s => s.select('.label').text(d => d.label));
+        drawBoxes();
     }
 
     function highlight(interval) {
@@ -244,6 +313,15 @@ export function createMainChart(container) {
             if (model.exact)
                 rows.push([`[${show(model.exact.lb[i])}, ${show(model.exact.ub[i])}]`, 'exact LP bounds']);
         }
+        if (boxSpec && boxSpec.levels.length === 1) {
+            const b = boxSpec.levels[0].boxes;
+            const k = d3.bisectRight(b.lo, i) - 1;
+            if (k >= 0 && i <= b.hi[k]) {
+                const len = b.hi[k] - b.lo[k] + 1;
+                rows.push([`${fmt(b.gMean[k])} in [${fmt(b.yMean[k] - b.half[k])}, ${fmt(b.yMean[k] + b.half[k])}]`,
+                    `fit mean over its Aₙ box (#${b.lo[k] + 1}–${b.hi[k] + 1}, |I| = ${len})`]);
+            }
+        }
         const ext = model.extremes.find(e => e.start <= i && i <= e.end);
         const note = ext
             ? `In a local ${ext.type === 'max' ? 'maximum' : 'minimum'} plateau: #${ext.start + 1}–${ext.end + 1}, `
@@ -256,5 +334,5 @@ export function createMainChart(container) {
         hideTooltip();
     });
 
-    return { render, highlight };
+    return { render, highlight, setBoxes };
 }

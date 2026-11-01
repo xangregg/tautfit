@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { threshold, checkRegion } from '../src/core/region.js';
+import { threshold, checkRegion, constraintBoxes } from '../src/core/region.js';
 import { multiresolution, allIntervals } from '../src/core/intervals.js';
 import { sigmaMAD } from '../src/core/sigma.js';
 import { simulate } from '../src/core/signals.js';
@@ -77,4 +77,30 @@ test('constant mean(y) is in Aₙ on pure noise for ≥ 95% of seeds (n = 500, �
     const rate = covered / seeds;
     console.log(`# constant-in-Aₙ rate on pure noise: ${(100 * rate).toFixed(1)}% of ${seeds} seeds`);
     assert.ok(rate >= 0.95, `rate ${rate}`);
+});
+
+test('constraint boxes: g’s mean is inside a box exactly when that constraint holds', () => {
+    const rng = createRng(21);
+    const n = 64;
+    const y = normals(n, rng);
+    const g = normals(n, rng).map(v => 0.3 * v);
+    const intervals = multiresolution(n);
+    const c = 1.1;
+    const boxes = constraintBoxes(y, g, intervals, c);
+    const check = checkRegion(y, g, intervals, c);
+    intervals.forEach(({ lo, hi }, k) => {
+        let sy = 0;
+        let sg = 0;
+        for (let i = lo; i <= hi; i++) {
+            sy += y[i];
+            sg += g[i];
+        }
+        const len = hi - lo + 1;
+        assert.ok(Math.abs(boxes.yMean[k] - sy / len) < 1e-12);
+        assert.ok(Math.abs(boxes.gMean[k] - sg / len) < 1e-12);
+        assert.ok(Math.abs(boxes.half[k] - c / Math.sqrt(len)) < 1e-15);
+        assert.ok(Math.abs(boxes.ratios[k] - check.ratios[k]) < 1e-12);
+        const inside = Math.abs(boxes.gMean[k] - boxes.yMean[k]) <= boxes.half[k] * (1 + 1e-12);
+        assert.equal(inside, check.ratios[k] <= 1 + 1e-12, `interval ${k}`);
+    });
 });

@@ -10,7 +10,7 @@ import { SIGNALS, simulate } from '../core/signals.js';
 import { parseTable, prepareXY, rowIndex } from '../core/data.js';
 import { sigmaMAD } from '../core/sigma.js';
 import { multiresolution, multiresolutionLevels } from '../core/intervals.js';
-import { threshold, checkRegion } from '../core/region.js';
+import { threshold, checkRegion, constraintBoxes } from '../core/region.js';
 import { tautStringRegression } from '../core/tautstring.js';
 import { localExtremes, stepSigns } from '../core/extremes.js';
 import { createControls } from './controls.js';
@@ -59,6 +59,7 @@ const state = {
     calibFamily: 'chosen', // calibrate for the λ family ('chosen') or all intervals ('all', for the fast bands)
     plugSigma: true, // calibrate with σ̂(Z), mimicking the estimated σ
     exact: false, // also compute exact LP bounds for the band (n ≤ EXACT_MAX_N)
+    boxes: 'hover', // Aₙ boxes on the chart: 'off' | 'hover' | 'level:k' | 'all'
 };
 
 let tableCache = { text: null, table: null };
@@ -381,7 +382,14 @@ function startup() {
     const status = d3.select('#status');
     const chart = createMainChart(document.getElementById('main-chart'));
     const residualEl = document.getElementById('residual-view');
-    const residual = createResidualView(residualEl, { onHover: iv => chart.highlight(iv) });
+    let hovered = null; // interval hovered in the residual view
+    const residual = createResidualView(residualEl, {
+        onHover: iv => {
+            hovered = iv;
+            chart.highlight(iv);
+            applyBoxes();
+        },
+    });
     const readouts = document.getElementById('readouts');
     const charts = document.getElementById('charts');
 
@@ -530,6 +538,51 @@ function startup() {
         renderReadouts(readouts, base, drawPrimary, state, shown.band, shown.exact);
     }
 
+    // Aₙ constraint boxes of the primary fit for one level, computed once per fit and level.
+    function boxesFor(fit, k) {
+        fit.boxes ??= [];
+        fit.boxes[k] ??= constraintBoxes(base.y, fit.g, base.levels[k], base.c);
+        return fit.boxes[k];
+    }
+
+    function boxesLabel() {
+        if (state.boxes === 'off')
+            return null;
+        if (state.boxes === 'hover')
+            return 'Aₙ boxes: hover a residual-view row';
+        if (state.boxes === 'all')
+            return 'Aₙ boxes, all levels';
+        const k = Number(state.boxes.split(':')[1]);
+        const first = base.levels[k]?.[0];
+        return first ? `Aₙ boxes, |I| = ${first.hi - first.lo + 1}: fit mean (tick) must lie in each box` : null;
+    }
+
+    function applyBoxes() {
+        if (!shown || !base || base.error) {
+            chart.setBoxes(null);
+            return;
+        }
+        const fit = shown.primary;
+        const common = { limit: fit.limit ?? 1, fitColorVar: METHODS[fit.key].color };
+        const emphasis = k => (hovered && hovered.level === k
+            ? base.levels[k].findIndex(iv => iv.lo === hovered.lo) : -1);
+        if (state.boxes === 'off' || (state.boxes === 'hover' && !hovered)) {
+            chart.setBoxes(null);
+        }
+        else if (state.boxes === 'all') {
+            chart.setBoxes({ ...common, faint: true,
+                levels: base.levels.map((_, k) => ({ boxes: boxesFor(fit, k), emphasize: emphasis(k) })) });
+        }
+        else {
+            const k = state.boxes === 'hover' ? hovered.level : Number(state.boxes.split(':')[1]);
+            if (!base.levels[k]) {
+                chart.setBoxes(null);
+                return;
+            }
+            chart.setBoxes({ ...common, faint: false, levels: [{ boxes: boxesFor(fit, k), emphasize: emphasis(k) }] });
+        }
+    }
+
     function draw() {
         if (!shown)
             return;
@@ -541,7 +594,9 @@ function startup() {
         }));
         chart.render({ x: base.x, y: base.y, f: state.showTruth ? base.f : null, fits,
             extremes: primary.ext.extremes, edges: base.edges, band,
-            exact: exact?.lb ? { lb: exact.lb, ub: exact.ub, label: 'exact LP bounds' } : null });
+            exact: exact?.lb ? { lb: exact.lb, ub: exact.ub, label: 'exact LP bounds' } : null,
+            boxesLabel: boxesLabel() });
+        applyBoxes();
         residual.render({ x: base.x, edges: base.edges, levels: base.levels, w: primary.w, ratios: primary.ratios,
             limit: primary.limit });
     }
@@ -572,6 +627,7 @@ function startup() {
         controls.sync(state, {
             columns: base.columns, equallySpaced: base.equallySpaced ?? true, kMin: base.kMin ?? null,
             n: base.n ?? 0, tau: base.tau ?? null,
+            levelSizes: base.levels ? base.levels.map(level => level[0].hi - level[0].lo + 1) : [],
         });
         charts.classList.toggle('empty', Boolean(base.error));
         if (base.error) {

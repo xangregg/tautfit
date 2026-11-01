@@ -153,6 +153,8 @@ export function createControls(container, state, onChange) {
         el('label', { class: 'check' }, [plug, ' include estimating σ (σ̂ of the noise)']),
     ]);
     const tauValue = el('span', { class: 'field-hint' });
+    const boxes = el('select');
+    boxes.addEventListener('change', () => onChange({ boxes: boxes.value }));
     const lambdaInput = numberInput('lambda', { min: 1.1, step: 0.1 });
     const sigmaFixed = el('input', { type: 'checkbox', checked: state.sigmaFixed !== null });
     const sigmaFixedValue = el('input', {
@@ -230,6 +232,7 @@ export function createControls(container, state, onChange) {
         field('λ', lambdaInput, 'interval family scale; 2 = dyadic'),
         el('label', { class: 'check' }, [sigmaFixed, ' fix σ instead of σ̂ (eq. 10)']),
         sigmaFixedValue,
+        field('Aₙ boxes on the chart', boxes, 'each box: where the fit’s mean over its x-span must lie (eq. 7)'),
         el('h2', { text: 'Fit' }),
         el('label', { class: 'field' }, [el('span', { class: 'field-label', text: 'method' }), method, methodHint]),
         fixBox,
@@ -243,7 +246,19 @@ export function createControls(container, state, onChange) {
     );
 
     let lastColumns = null;
-    function sync(st, { columns, equallySpaced = true, kMin = null, n = 0, tau = null }) {
+    let lastLevelSizes = null;
+    function sync(st, { columns, equallySpaced = true, kMin = null, n = 0, tau = null, levelSizes = [] }) {
+        const sizesKey = levelSizes.join(',');
+        if (sizesKey !== lastLevelSizes) {
+            lastLevelSizes = sizesKey;
+            boxes.replaceChildren(
+                el('option', { value: 'off', text: 'Off' }),
+                el('option', { value: 'hover', text: 'Row hovered in the residual view' }),
+                ...levelSizes.map((size, k) => el('option', { value: `level:${k}`, text: `Level |I| = ${size}` })),
+                el('option', { value: 'all', text: 'All levels (faint)' }),
+            );
+        }
+        boxes.value = [...boxes.options].some(o => o.value === st.boxes) ? st.boxes : 'hover';
         const isUser = st.source === USER;
         simBox.hidden = isUser;
         userBox.hidden = !isUser;

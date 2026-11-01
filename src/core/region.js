@@ -64,3 +64,49 @@ export function checkRegion(y, g, intervals, c, tol = 0) {
     }
     return { ok: violations === 0, maxRatio, argMax, violations, w, ratios };
 }
+
+/**
+ * @typedef {object} ConstraintBoxes
+ * @property {Int32Array} lo        first observation of each interval (0-based)
+ * @property {Int32Array} hi        last observation (inclusive)
+ * @property {Float64Array} yMean   mean of y over the interval
+ * @property {Float64Array} half    half-height c/√|I|
+ * @property {Float64Array} gMean   mean of g over the interval
+ * @property {Float64Array} ratios  |w(I)|/c
+ */
+
+/**
+ * Aₙ drawn as boxes: each constraint of eq. (7) says the mean of g over I lies in
+ *     [mean_I(y) − c/√|I|, mean_I(y) + c/√|I|]
+ * (divide |Σ_I(y − g)| ≤ c√|I| by |I|). So g ∈ Aₙ exactly when every box contains g's mean over its
+ * interval; gMean inside the box ⇔ ratio ≤ 1.
+ *
+ * @param {ArrayLike<number>} y
+ * @param {ArrayLike<number>} g
+ * @param {{lo: number, hi: number}[]} intervals
+ * @param {number} c
+ * @returns {ConstraintBoxes}
+ */
+export function constraintBoxes(y, g, intervals, c) {
+    const Sy = prefixSums(y);
+    const Sg = prefixSums(g);
+    const m = intervals.length;
+    const out = {
+        lo: new Int32Array(m), hi: new Int32Array(m),
+        yMean: new Float64Array(m), half: new Float64Array(m), gMean: new Float64Array(m), ratios: new Float64Array(m),
+    };
+    for (let k = 0; k < m; k++) {
+        const { lo, hi } = intervals[k];
+        const len = hi - lo + 1;
+        const sy = Sy[hi + 1] - Sy[lo];
+        const sg = Sg[hi + 1] - Sg[lo];
+        out.lo[k] = lo;
+        out.hi[k] = hi;
+        out.yMean[k] = sy / len;
+        out.gMean[k] = sg / len;
+        out.half[k] = c / Math.sqrt(len);
+        const w = Math.abs(sy - sg) / Math.sqrt(len);
+        out.ratios[k] = c > 0 ? w / c : (w === 0 ? 0 : Infinity);
+    }
+    return out;
+}

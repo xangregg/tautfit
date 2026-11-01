@@ -276,6 +276,12 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
   extreme plateaus marked on the x-axis.
 - **Residual view under the main chart:** one row per resolution level k, one cell per interval, colour =
   |w(I)|/c (sequential scale, distinct colour for > 1). This is the picture that explains Aₙ.
+- **Aₙ boxes (added after M5):** each constraint of eq. 7 drawn on the main chart as a box spanning its interval's
+  cells, height mean_I(y) ± c/√|I|; a tick marks the fit's mean over the interval, so g ∈ Aₙ exactly when every tick
+  lies in its box (violations in the violation color). Modes: off, the row hovered in the residual view (default),
+  one level, all levels (faint outlines). A plain y ± c ribbon is deliberately not offered: it is the exact
+  per-point projection of Aₙ (eq. 53) but suggests that any curve inside it is in Aₙ, which is false.
+  `region.constraintBoxes`; tested against `checkRegion` (tick inside ⇔ ratio ≤ 1).
 - **Readouts:** n, σ̂, τ, c, number of local extremes, taut-string iterations, LP objective and time,
   K_min, coverage note.
 - **Controls:** dataset (built-ins, CSV paste/drop with column pickers), seed, noise σ for simulated data,
