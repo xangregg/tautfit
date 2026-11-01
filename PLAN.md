@@ -17,7 +17,7 @@ Data: pairs (xᵢ, yᵢ), i = 1..n, sorted by x. The paper assumes xᵢ = i/n; s
 Φ⁻¹(0.75)·√2 = 0.9538725524… (hard-code with a comment). Positively biased under signal, which only makes
 Aₙ more conservative. Allow a user override of σ.
 
-*Added after M5:* optional trend-robust estimate `sigmaGSJS` (Gasser, Sroka & Jennen-Steinmetz 1986, median
+*Added in M6:* optional trend-robust estimate `sigmaGSJS` (Gasser, Sroka & Jennen-Steinmetz 1986, median
 form): pseudo-residuals eᵢ = aᵢy_{i−1} + bᵢy_{i+1} − yᵢ against the line through the neighbors, scaled by
 1/√(aᵢ² + bᵢ² + 1); a locally linear trend cancels exactly at any spacing. Motivation: on small, steep data the
 inflation is not just conservative but makes Aₙ useless (user example, n = 10: eq. 10 gives 1.05, GSJS 0.12,
@@ -26,7 +26,7 @@ Readout warnings: n < 50; σ̂(eq. 10)/σ̂(GSJS) > 1 + 4/√n (≈ 1% false ala
 pure noise). Calibration plugs in the estimator actually used (none when σ is fixed). At n = 10 with GSJS σ̂ the
 calibrated τ is 8.7, i.e. τ = 3 covers only 76%.
 
-*Tied x (after Known issue 14):* both estimators are order-free when x has ties. Pseudo-residuals: pure error
+*Tied x (M6, after Known issue 14):* both estimators are order-free when x has ties. Pseudo-residuals: pure error
 (yᵢ − ȳ_j)·√(k_j/(k_j−1)) within each replicated x (weight (k_j−1)/k_j, i.e. k_j−1 df per group) plus between-x
 terms on the x-means (eq. 10: (ȳ_{j+1} − ȳ_j)/√(1/k_j + 1/k_{j+1}); GSJS: sd-scaled local linear residual of the
 means), weighted median / Φ⁻¹(0.75). If the replicate df ≥ the number of between-x terms, the between-x terms are
@@ -46,7 +46,7 @@ Also provide `allIntervals(n)` (every [i, j], ~n²/2) for small n, used only for
 
 Represent an interval as {lo, hi} with 0-based inclusive indices.
 
-*Corrected after M5 (Known issue 14):* the family is built on the **distinct x values** and mapped to observation
+*Corrected in M6 (Known issue 14):* the family is built on the **distinct x values** and mapped to observation
 ranges (`xIntervalFamily`, `xIntervalLevels`, `allXIntervals`), because the paper's intervals are intervals of x
 (eq. 6: I = [t_j, t_k], |I| = number of points in it) and so never separate tied observations. Without ties this
 is identical to the index-based family.
@@ -196,10 +196,10 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
   and the lower bound index-linear interpolation; Known issue 12. The UI disables them for unequal spacing.)*
 - Derivative-based methods use divided differences on rescaled x.
 - Ties in x: stable sort, keep rows. For derivative-based LPs add gᵢ = gᵢ₊₁ for tied x and skip
-  zero-width differences. For display, plot the fit's mean at each tied x. *(Corrected after M5, Known issue 14:
+  zero-width differences. For display, plot the fit's mean at each tied x. *(Corrected in M6, Known issue 14:
   that was not enough. Aₙ's intervals must be intervals of x, the taut string has nodes only between distinct x
-  (one value per x), and monotone band windows are runs of whole tie groups. σ̂ (eq. 10, GSJS) still depends on
-  the order of tied rows; a pure-error estimate from the replicates would not.)* *(M3: all LP fits use one variable per
+  (one value per x), and monotone band windows are runs of whole tie groups. σ̂ (eq. 10, GSJS) uses pure error
+  within tied x and is order-free, §1.1.)* *(M3: all LP fits use one variable per
   distinct x, so tied observations share a value by construction.)*
 
 ---
@@ -304,13 +304,13 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
 ### UI (`src/ui/`, D3 via import map)
 
 - **Main chart:** points (small, translucent), fit line(s) (taut string drawn as steps), band ribbon,
-  extreme plateaus marked on the x-axis. *(Added after M5:)* step fits are drawn over each point's cell (edges at
+  extreme plateaus marked on the x-axis. *(Added in M6:)* step fits are drawn over each point's cell (edges at
   midpoints), except across gaps in x (spacing > 3× the median): there the solid line stops at the data and a
   dotted connector joins the two points, and plateau marks stop at the data too, so no jump or extreme is drawn
   at a position with no data. Line fits and the residual view / Aₙ boxes keep the cell convention.
 - **Residual view under the main chart:** one row per resolution level k, one cell per interval, colour =
   |w(I)|/c (sequential scale, distinct colour for > 1). This is the picture that explains Aₙ.
-- **Aₙ boxes (added after M5):** each constraint of eq. 7 drawn on the main chart as a box spanning its interval's
+- **Aₙ boxes (added in M6):** each constraint of eq. 7 drawn on the main chart as a box spanning its interval's
   cells, height mean_I(y) ± c/√|I|; a tick marks the fit's mean over the interval, so g ∈ Aₙ exactly when every tick
   lies in its box (violations in the violation color). Modes: off, the row hovered in the residual view (default),
   one level, all levels (faint outlines). A plain y ± c ribbon is deliberately not offered: it is the exact
@@ -428,11 +428,34 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         With the dyadic family the exact bounds are *wider* than the fast monotone bounds (exp(5t), n = 300: mean
         width 16.2 vs 13.7) and about equal for convex (10.15 vs 9.96), since the fast bounds use extra windows.
 
-### M6 — Polish and deploy
+### M6 — Small and tied data (driven by user data sets)
+- [x] Aₙ boxes overlay (§3 UI): each constraint of eq. 7 as a box mean_I(y) ± c/√|I| with a tick at the fit's mean
+      over I; modes off / hovered residual row (default) / one level / all levels
+      → `region.constraintBoxes`, tested against `checkRegion` (tick inside ⇔ ratio ≤ 1)
+- [x] Trend-robust σ̂ option (§1.1): `sigmaGSJS`, local linear pseudo-residuals in median form; calibration plugs in
+      the estimator actually used; readout warnings for n < 50 and for σ̂(eq. 10)/σ̂(GSJS) > 1 + 4/√n
+      → motivated by a user data set (n = 10, unevenly spaced, steep): eq. 10 gave σ̂ = 1.05 and c = 2.75 with y
+        spanning 7, so Aₙ barely constrained anything; GSJS gives 0.12
+- [x] Gap connectors (§3 UI): across gaps in x (spacing > 3× the median) step fits stop at the data with a dotted
+      connector, and plateau marks stop at the data, so no jump or extreme is drawn where there are no data
+- [x] Ties (Known issue 14): intervals of x throughout (`xIntervalFamily`, `xIntervalLevels`, `allXIntervals`),
+      taut-string nodes only between distinct x, monotone band windows over whole tie groups; the y-domain always
+      includes the fits
+      → a user data set (101 rows, 30 distinct ages) made every LP infeasible before the fix; min TV(g″) on it is
+        now a parabola peaking near age 40. Regression tests in test/ties.test.js, including row-shuffle invariance.
+- [x] Tie-aware σ̂ (§1.1): pure error within tied x, plus between-x-means terms only when the replicates carry fewer
+      df than there are such terms; both estimators order-free, unchanged without ties. The σ estimator choice is
+      disabled when only pure error is used.
+      → ages data: row-order eq. 10 ranged 2.62–4.19 over shuffles of tied rows; tie-aware 3.145 for every order.
+        Steep trend with 1–4 replicates (σ = 1): 1.63 → 0.99.
+      → not done (offered): an explicit frequency column (rows expanded, n = Σ freq), and dot size by the
+        multiplicity of identical (x, y) points.
+
+### M7 — Polish and deploy
 - [ ] URL-hash state, CSV export of fit and bands, About panel with the paper reference and method notes
 - [ ] GitHub Pages from main branch root; verify .wasm loads from Pages
 
-### M7 — Later: "least ambitious fit" on top of Aₙ
+### M8 — Later: "least ambitious fit" on top of Aₙ
 Ladder of simplicity checked by tiny LPs inside Aₙ: constant feasible? → linear (a + b·x) feasible? →
 minTV(1) linear spline with fewest kinks (ramps with flat ends arise naturally), then optionally smooth the
 joins with minTV(2) under the same sign pattern. Display which rung was reached.
@@ -453,7 +476,7 @@ Donoho–Johnstone test functions on t ∈ [0, 1] (verify constants against a st
 Conventionally scaled so sd(f) = 7 with σ = 1 (make the scaling a parameter).
 
 From the paper: exp(5t) + 5Z, n = 1000 (Fig. 3); sin(4πt) + 0.2Z, n = 500 (Fig. 6); narrow box peak
-b((t − 1/2)/0.01) (eq. 18). Also: pure noise, straight line, and a logistic ramp (for M7).
+b((t − 1/2)/0.01) (eq. 18). Also: pure noise, straight line, and a logistic ramp (for M8).
 
 ---
 
