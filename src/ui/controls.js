@@ -1,7 +1,7 @@
 // Control panel. Plain DOM; every change is reported as a partial state patch via onChange.
 
 import { SIGNALS } from '../core/signals.js';
-import { METHODS, METHOD_KEYS } from './methods.js';
+import { METHODS, METHOD_KEYS, FIT_SHAPES, FIT_SHAPE_KEYS, takesShape } from './methods.js';
 import { BANDS, BAND_KEYS } from './bands.js';
 
 const K_MULT_MIN = 1; // K slider range, multiples of the fast K_min
@@ -183,6 +183,10 @@ export function createControls(container, state, onChange) {
     method.value = state.method;
     const methodHint = el('span', { class: 'field-hint' });
     method.addEventListener('change', () => onChange({ method: method.value }));
+    const fitShape = el('select', {}, FIT_SHAPE_KEYS.map(key => el('option', { value: key, text: FIT_SHAPES[key].label })));
+    fitShape.value = state.fitShape;
+    fitShape.addEventListener('change', () => onChange({ fitShape: fitShape.value }));
+    const fitShapeHint = el('span', { class: 'field-hint' });
     const fixExtremes = el('input', { type: 'checkbox', checked: state.fixExtremes });
     fixExtremes.addEventListener('change', () => onChange({ fixExtremes: fixExtremes.checked }));
     const fixBox = el('label', { class: 'check' }, [fixExtremes, ' pin extremes to the taut string’s values (Fig. 2)']);
@@ -243,6 +247,7 @@ export function createControls(container, state, onChange) {
         field('Aₙ boxes on the chart', boxes, 'each box: where the fit’s mean over its x-span must lie (eq. 7)'),
         el('h2', { text: 'Fit' }),
         el('label', { class: 'field' }, [el('span', { class: 'field-label', text: 'method' }), method, methodHint]),
+        el('label', { class: 'field' }, [el('span', { class: 'field-label', text: 'constrain the fit to be' }), fitShape, fitShapeHint]),
         fixBox,
         el('span', { class: 'field-label', text: 'also show' }),
         overlays,
@@ -285,6 +290,11 @@ export function createControls(container, state, onChange) {
         yCol.value = String(st.yCol);
         methodHint.textContent = METHODS[st.method].note;
         fixBox.hidden = st.method !== 'combined';
+        fitShape.disabled = !takesShape(st.method);
+        fitShapeHint.textContent = takesShape(st.method)
+            ? 'the simplest function in Aₙ with this shape; LP overlays get it too'
+            : st.method === 'combined' ? 'combined takes its shape from the taut string'
+                : 'applies to the LP methods; min TV(g) gives a step fit like the taut string';
         for (const [key, { label }] of overlayChecks)
             label.hidden = key === st.method;
         for (const opt of band.options) {

@@ -1,8 +1,8 @@
 // Smoothness regularization inside Aₙ (paper §4.1–4.2): set up, solve and translate back.
 // The HiGHS instance is passed in, so this runs unchanged in Node tests and in the LP worker.
 
-import { tieGroups, totalVariation, supNorm } from './derivatives.js';
-import { buildRegularization } from './lp-build.js';
+import { totalVariation, supNorm } from './derivatives.js';
+import { buildRegularization, lpFrame, shapeConstraints } from './lp-build.js';
 import { solveModel } from './lp-solve.js';
 import { xIntervalFamily } from './intervals.js';
 import { threshold, checkRegion } from './region.js';
@@ -26,6 +26,8 @@ const REGION_TOL = 1e-6; // relative slack when re-checking LP solutions against
  * @property {Array<{type: 'max'|'min', start: number, end: number, value: number}>} [fixExtremes]
  *     combined, optional: make each taut-string extreme's value the fit's extreme value there
  *     (paper Fig. 2): g ≤ value on the plateau (max; ≥ for min) and g = value at its middle
+ * @property {import('./lp-build.js').Shape} [shape]  optional shape constraint on g (minTV, minSup):
+ *     the simplest function in Aₙ with that shape; status 'infeasible' when there is none
  * @property {object} [options]        HiGHS options
  */
 
@@ -68,25 +70,16 @@ export function regularize(highs, spec) {
     const intervals = spec.intervals ?? xIntervalFamily(x, spec.lambda ?? 2);
     const c = threshold(sigma, tau, n);
 
-    let mean = 0;
-    for (const v of y)
-        mean += v;
-    mean /= n;
-    let scale = sigma;
-    if (!(scale > 0)) {
-        let ss = 0;
-        for (const v of y)
-            ss += (v - mean) ** 2;
-        scale = Math.sqrt(ss / Math.max(1, n - 1)) || 1;
+    const frame = lpFrame(x, y, sigma);
+    const { mean, scale, ys, group, xs, m, range, tauX } = frame;
+    let shapeRows = {};
+    if (spec.shape) {
+        if (method === 'combined')
+            throw new RangeError('combined already constrains the shape (taut-string signs)');
+        shapeRows = shapeConstraints(spec.shape, frame);
     }
-    const ys = Float64Array.from(y, v => (v - mean) / scale);
 
-    const { group, xs } = tieGroups(x);
-    const m = xs.length;
-    const range = xs[m - 1] - xs[0];
-    const tauX = Float64Array.from(xs, v => (m > 1 ? (m - 1) * (v - xs[0]) / range : 0));
-
-    let signs;
+    let signs = shapeRows.signs;
     if (method === 'combined' && spec.signs) {
         // Distinct step j (group j → j+1) crosses the observation step after group j's last member.
         signs = new Int8Array(Math.max(0, m - 1));
@@ -110,6 +103,7 @@ export function regularize(highs, spec) {
 
     const { model, hStart } = buildRegularization({
         ys, group, tau: tauX, intervals, c: c / scale, objective, k, signs, fixed,
+        curvature: shapeRows.curvature, maxCurv: shapeRows.maxCurv,
     });
     const sol = solveModel(highs, model, spec.options);
     const toX = m > 1 ? Math.pow((m - 1) / range, k) : 0; // τ-derivative → x-derivative factor

@@ -5,7 +5,7 @@ import { stateToHash, hashToState, packText, unpackText } from '../src/ui/urlsta
 // Mirrors the initial state in src/ui/main.js.
 const DEFAULTS = {
     source: 'blocks', n: 1024, sigma: 1, seed: 1, showTruth: true, userText: '', xCol: null, yCol: null,
-    tau: 3, lambda: 2, sigmaFixed: null, sigmaMethod: 'diff', method: 'taut', overlays: [], fixExtremes: false,
+    tau: 3, lambda: 2, sigmaFixed: null, sigmaMethod: 'diff', method: 'taut', overlays: [], fixExtremes: false, fitShape: 'none',
     band: 'none', theta: 1.5, kMultiple: 2, tauMode: 'fixed', alpha: 0.95, calibFamily: 'chosen', plugSigma: true,
     exact: false, boxes: 'hover',
 };

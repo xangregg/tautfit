@@ -18,9 +18,9 @@ import { createMainChart } from './chart.js';
 import { createResidualView } from './residual.js';
 import { cellEdges } from './layout.js';
 import { onThemeChange } from './theme.js';
-import { regularizeInWorker, exactBoundsInWorker, calibrateInWorker } from './lp.js';
+import { regularizeInWorker, exactBoundsInWorker, calibrateInWorker, shapeThresholdInWorker } from './lp.js';
 import { tauFromSample, coverageOfTau } from '../core/calibrate.js';
-import { METHODS } from './methods.js';
+import { METHODS, FIT_SHAPES, takesShape } from './methods.js';
 import { BANDS } from './bands.js';
 import { stateToHash, hashToState } from './urlstate.js';
 import { toCsv, exportColumns } from './export.js';
@@ -60,6 +60,7 @@ const state = {
     method: 'taut', // key of METHODS
     overlays: [], // keys of METHODS drawn in addition to the primary fit
     fixExtremes: false, // combined: pin extremes to the taut string's values
+    fitShape: 'none', // shape constraint on the LP fits: key of FIT_SHAPES
     band: 'none', // key of BANDS
     theta: 1.5, // window grid ratio for the fast bounds
     kMultiple: 2, // smoothness band: K = kMultiple × K_min (fast)
@@ -171,7 +172,7 @@ function deriveBase(st, data, tauInfo) {
     // K_min costs O(n·|grid|²); only the smoothness band needs it.
     const kMin = equallySpaced && st.band === 'smooth' ? smoothnessKMin(y, c, h, { theta: st.theta }) : null;
     return {
-        columns, notes, warnings, x, y, f, n, ties: groups.ties, levelSizes, replicates, sigmaHat, sigmaRobust, useRobust, sigmaUsed, tau, tauInfo, c, family, levels, taut, tautExt, regionKey,
+        columns, notes, warnings, x, y, f, n, dataKey, ties: groups.ties, levelSizes, replicates, sigmaHat, sigmaRobust, useRobust, sigmaUsed, tau, tauInfo, c, family, levels, taut, tautExt, regionKey,
         equallySpaced, h, kMin, edges: cellEdges(x),
     };
 }
@@ -246,7 +247,7 @@ function computeBand(base, st, getFit) {
         shape = { type: 'convex', concave: st.band === 'concave' };
     }
     else if (st.band === 'pwConvex') {
-        const fit = getFit('minTV1');
+        const fit = getFit('minTV1', 'none'); // the band's own assumption, not the fit's shape constraint
         if (!fit)
             return { pending: true };
         if (fit.error)
@@ -318,8 +319,11 @@ function bandRows(base, band, st, exact) {
         }
     }
     else if (exact?.status) {
+        const why = exact.marginal
+            ? 'Aₙ ∩ shape is empty to within solver tolerance: τ is at the edge of admitting this shape'
+            : 'no function in Aₙ has this shape: the assumption is rejected';
         add('exact LP bounds', exact.status === 'infeasible' ? 'infeasible' : exact.status,
-            exact.status === 'infeasible' ? 'no function in Aₙ has this shape: the assumption is rejected' : undefined);
+            exact.status === 'infeasible' ? why : undefined);
     }
     return rows;
 }
@@ -336,7 +340,7 @@ function tauRow(base, st) {
         + `95% MC interval ${fmt(t.tauLo)}–${fmt(t.tauHi)}; τ = 3 would cover ${fmt(100 * t.cov3)}%`];
 }
 
-function readoutRows(base, fit, st) {
+function readoutRows(base, fit, st, shape) {
     const rows = [];
     const add = (label, value, title) => rows.push({ label, value, title });
     add('n', fmtInt(base.n));
@@ -362,7 +366,9 @@ function readoutRows(base, fit, st) {
     add(...tauRow(base, st));
     add('c = σ√(τ log n)', fmt(base.c));
     add('|𝓘ₙ|', `${fmtInt(base.family.length)} intervals`, `λ = ${fmt(st.lambda)}, singletons included`);
-    add('fit', METHODS[fit.key].name);
+    add('fit', fitName(fit));
+    if (shape?.test)
+        rows.push(...shapeTestRows(shape.test, Boolean(shape.failed)));
     if (fit.lp) {
         add(fit.lp.objectiveLabel, fmt(fit.lp.objective),
             'minimum over Aₙ, derivatives in x units; the minimizing g may not be unique (HiGHS returns a vertex)');
@@ -382,6 +388,51 @@ function readoutRows(base, fit, st) {
         + (onBoundary ? '; on the boundary of Aₙ, as an LP optimum is (within solver tolerance)' : ''));
     add('violated intervals', `${fmtInt(fit.check.violations)} of ${fmtInt(base.family.length)}`);
     return rows;
+}
+
+/** Display name of a fit, with its shape constraint. */
+function fitName(fit) {
+    const shape = fit.shapeKey && fit.shapeKey !== 'none' ? `, ${FIT_SHAPES[fit.shapeKey].name}` : '';
+    return `${METHODS[fit.key].name}${shape}`;
+}
+
+function pText(cov) {
+    return cov >= 1 ? `p < ${fmt(1 / CALIBRATION_B)}` : `p ≈ ${d3.format('.2~g')(1 - cov)}`;
+}
+
+// Readout rows for the shape test: the smallest τ admitting the shape and, when a Monte Carlo sample is
+// available, the coverage of Aₙ at that τ (1 − coverage is a p-value for the shape; src/core/shapetest.js).
+function shapeTestRows(test, failed) {
+    const name = FIT_SHAPES[test.shapeKey].name;
+    const rows = [{ label: 'shape', value: failed ? `${name} (no such fit in Aₙ)` : name,
+        title: `fit constrained to be ${name}: the simplest such function in Aₙ` }];
+    let value = '…';
+    let title = 'solving one LP for the smallest τ that admits the shape';
+    if (test.error) {
+        value = test.error;
+        title = undefined;
+    }
+    else if (!test.pending) {
+        value = fmt(test.tau);
+        title = test.cov !== null
+            ? `Aₙ at that τ covers ${fmt(100 * test.cov)}% (Monte Carlo, B = ${CALIBRATION_B}, this n and design): `
+                + `${pText(test.cov)} for “f is ${name}”`
+            : test.covPending ? 'computing the coverage of that τ…'
+                : `coverage not computed for n > ${CALIBRATE_ALL_MAX_N}`;
+    }
+    rows.push({ label: `${name} needs τ ≥`, value, title });
+    return rows;
+}
+
+function shapeWarning(base, test, methodKey) {
+    const name = FIT_SHAPES[test.shapeKey].name;
+    let text = `No ${name} function is in Aₙ at τ = ${fmt(base.tau)}`;
+    if (test.tau !== undefined) {
+        text += `; one needs τ ≥ ${fmt(test.tau)}`;
+        if (test.cov !== null && test.cov !== undefined)
+            text += `, where Aₙ covers ${fmt(100 * test.cov)}% at this n, so the data reject “${name}” at ${pText(test.cov)}`;
+    }
+    return `${text}. Showing the unconstrained ${METHODS[methodKey].name}.`;
 }
 
 function verdictText(base, fit) {
@@ -416,17 +467,19 @@ function verdictText(base, fit) {
     return `: the smallest ${fit.lp.objectiveLabel} of any function in Aₙ is ${fmt(fit.lp.objective)}; ${extremes}.`;
 }
 
-function renderReadouts(container, base, fit, st, band, exact, extraNotes) {
+function renderReadouts(container, base, fit, st, band, exact, extraNotes, shape) {
     const sel = d3.select(container);
     sel.selectAll('*').remove();
     sel.append('h2').text('Readouts');
     const verdict = sel.append('p').attr('class', `verdict ${fit.check.ok ? 'ok' : 'bad'}`);
-    verdict.append('strong').text(`${METHODS[fit.key].name} ${fit.check.ok ? '∈' : '∉'} Aₙ`);
+    verdict.append('strong').text(`${fitName(fit)} ${fit.check.ok ? '∈' : '∉'} Aₙ`);
     verdict.append('span').text(verdictText(base, fit));
+    if (shape?.failed)
+        sel.append('p').attr('class', 'warning').text(shapeWarning(base, shape.test, fit.key));
     for (const w of base.warnings)
         sel.append('p').attr('class', 'warning').text(w);
     const dl = sel.append('dl');
-    for (const r of readoutRows(base, fit, st)) {
+    for (const r of readoutRows(base, fit, st, shape)) {
         dl.append('dt').text(r.label);
         dl.append('dd').text(r.value);
         if (r.title)
@@ -467,38 +520,47 @@ async function startup() {
     const inFlight = new Set();
     const calibCache = new Map(); // key → sorted Monte Carlo sample
     const exactCache = new Map(); // key → exact bounds result
+    const shapeCache = new Map(); // key → shapeThreshold result
     const progress = new Map(); // in-flight job key → {label, fraction}
     let base = null;
     let shown = null; // {primary, overlays} currently drawn
     let shownRegion = null; // regionKey of the data behind `shown`
 
-    function lpKey(methodKey) {
+    function lpKey(methodKey, shapeKey) {
         const extra = methodKey === 'combined' ? `|${state.fixExtremes}` : '';
-        return `${base.regionKey}|${methodKey}${extra}`;
+        return `${base.regionKey}|${methodKey}${extra}|${shapeKey}`;
     }
 
-    // Returns the fit if available; otherwise starts the LP (once) and returns null.
-    function getFit(methodKey) {
+    // Returns the fit if available; otherwise starts the LP (once) and returns null. A shape-constrained
+    // LP with no solution gives {infeasible: true}.
+    function getFit(methodKey, shapeKey = takesShape(methodKey) ? state.fitShape : 'none') {
         const spec = METHODS[methodKey];
         if (methodKey === 'taut')
             return analyze(base.tautFit ??= { key: 'taut', g: base.taut.f }, base);
         if (methodKey === 'constant')
             return analyze(base.constFit ??= { key: 'constant', g: new Float64Array(base.n).fill(d3.mean(base.y)) }, base);
-        const key = lpKey(methodKey);
+        const key = lpKey(methodKey, shapeKey);
         const cached = lpCache.get(key);
         if (cached)
-            return cached.error ? cached : analyze(cached, base);
+            return cached.error || cached.infeasible ? cached : analyze(cached, base);
         if (!inFlight.has(key)) {
             inFlight.add(key);
             const req = { x: base.x, y: base.y, sigma: base.sigmaUsed, tau: base.tau, lambda: state.lambda, ...spec.lp };
+            if (shapeKey !== 'none')
+                req.shape = FIT_SHAPES[shapeKey].shape;
             if (methodKey === 'combined') {
                 req.signs = stepSigns(base.taut.f, { plateaus: 'split' });
                 if (state.fixExtremes)
                     req.fixExtremes = base.tautExt.extremes;
             }
             regularizeInWorker(req)
-                .then(result => (result.g ? { key: methodKey, g: result.g, lp: { ...result, fixed: Boolean(req.fixExtremes) } }
-                    : { key: methodKey, error: `LP ${result.status}` }))
+                .then(result => {
+                    if (result.g)
+                        return { key: methodKey, shapeKey, g: result.g, lp: { ...result, fixed: Boolean(req.fixExtremes) } };
+                    if (result.status === 'infeasible' && shapeKey !== 'none')
+                        return { key: methodKey, shapeKey, infeasible: true };
+                    return { key: methodKey, error: `LP ${result.status}` };
+                })
                 .catch(err => ({ key: methodKey, error: String(err.message ?? err) }))
                 .then(fit => {
                     inFlight.delete(key);
@@ -525,8 +587,8 @@ async function startup() {
         return state.sigmaMethod;
     }
 
-    function calibKey(data) {
-        const fam = state.calibFamily === 'all' ? 'all' : `λ${state.lambda}`;
+    function calibKey(data, family) {
+        const fam = family === 'all' ? 'all' : `λ${state.lambda}`;
         const est = calibEstimator();
         // GSJS and tied x (the family is over the distinct x) make the calibration specific to the data's x
         const design = est === 'gsjs' || data.ties ? `|${data.dataKey}` : '';
@@ -539,16 +601,25 @@ async function startup() {
             return { tau: state.tau, mode: 'fixed' };
         if (state.calibFamily === 'all' && data.n > CALIBRATE_ALL_MAX_N)
             return { error: `All-interval calibration is limited to n ≤ ${CALIBRATE_ALL_MAX_N} (O(n²) per replicate).` };
-        const key = calibKey(data);
-        const sorted = calibCache.get(key);
+        const sorted = getCalibSample(data, state.calibFamily, 'Calibrating τ');
         if (sorted) {
             const t = tauFromSample(sorted, state.alpha, data.n);
             return { ...t, mode: 'calibrated', cov3: coverageOfTau(sorted, 3, data.n) };
         }
+        return { pending: true };
+    }
+
+    // Cached Monte Carlo sample of the multiscale statistic for this design and family, or null while it
+    // is being computed (started on first request; update() runs when it arrives).
+    function getCalibSample(data, family, label) {
+        const key = calibKey(data, family);
+        const sorted = calibCache.get(key);
+        if (sorted)
+            return sorted;
         if (!progress.has(key)) {
-            progress.set(key, { label: 'Calibrating τ', fraction: 0 });
+            progress.set(key, { label, fraction: 0 });
             calibrateInWorker({
-                n: data.n, lambda: state.lambda, family: state.calibFamily, B: CALIBRATION_B,
+                n: data.n, lambda: state.lambda, family, B: CALIBRATION_B,
                 seed: CALIBRATION_SEED, sigmaEstimator: calibEstimator(), x: data.x,
             }, fr => {
                 progress.get(key).fraction = fr;
@@ -563,7 +634,44 @@ async function startup() {
                 update();
             });
         }
-        return { pending: true };
+        return null;
+    }
+
+    // The shape test for the constrained fit: smallest τ admitting the shape (one LP in the worker) and the
+    // coverage of that τ for the λ family Aₙ uses (Monte Carlo, n ≤ CALIBRATE_ALL_MAX_N). Null when the
+    // fit is unconstrained.
+    function getShapeTest() {
+        const shapeKey = state.fitShape;
+        if (shapeKey === 'none' || !takesShape(state.method))
+            return null;
+        const key = `${base.regionKey}|shape|${shapeKey}`;
+        const r = shapeCache.get(key);
+        if (!r) {
+            if (!inFlight.has(key)) {
+                inFlight.add(key);
+                shapeThresholdInWorker({ x: base.x, y: base.y, sigma: base.sigmaUsed, lambda: state.lambda,
+                    shape: FIT_SHAPES[shapeKey].shape })
+                    .then(res => shapeCache.set(key, res))
+                    .catch(err => shapeCache.set(key, { status: `error: ${err.message}` }))
+                    .finally(() => {
+                        inFlight.delete(key);
+                        render();
+                    });
+            }
+            return { shapeKey, pending: true };
+        }
+        if (r.status !== 'optimal')
+            return { shapeKey, error: r.status };
+        let cov = null;
+        let covPending = false;
+        if (base.n <= CALIBRATE_ALL_MAX_N) {
+            const sorted = getCalibSample(base, 'chosen', 'Coverage for the shape test');
+            if (sorted)
+                cov = coverageOfTau(sorted, r.tau, base.n);
+            else
+                covPending = true;
+        }
+        return { shapeKey, tau: r.tau, c: r.c, cov, covPending };
     }
 
     // Exact LP bounds for the band, if requested and possible; null, {pending}, or the result.
@@ -594,8 +702,15 @@ async function startup() {
     function render() {
         if (!base || base.error)
             return;
-        const primary = getFit(state.method);
-        const overlays = state.overlays.filter(k => k !== state.method).map(getFit).filter(f => f && !f.error);
+        let primary = getFit(state.method);
+        let shapeFailed = false;
+        if (primary?.infeasible) {
+            // no function in Aₙ has the shape: show the unconstrained fit and say so
+            shapeFailed = true;
+            primary = getFit(state.method, 'none');
+        }
+        const overlays = state.overlays.filter(k => k !== state.method).map(k => getFit(k))
+            .filter(f => f && !f.error && !f.infeasible);
         if (primary?.error) {
             status.classed('error', true).text(`${METHODS[state.method].name}: ${primary.error}`);
             return;
@@ -613,9 +728,11 @@ async function startup() {
         if (pending && shown)
             return; // keep the previous frame, dimmed, until the solve returns
         const drawPrimary = primary ?? getFit('taut');
+        const test = getShapeTest();
         shown = { primary: drawPrimary, overlays, band: bandPending ? null : band, exact: exactPending ? null : exact };
         draw();
-        renderReadouts(readouts, base, drawPrimary, state, shown.band, shown.exact, linkNote ? [linkNote] : []);
+        renderReadouts(readouts, base, drawPrimary, state, shown.band, shown.exact, linkNote ? [linkNote] : [],
+            test ? { test, failed: shapeFailed } : null);
     }
 
     // Aₙ constraint boxes of the primary fit for one level, computed once per fit and level.
@@ -671,7 +788,7 @@ async function startup() {
             return;
         const { primary, overlays, band, exact } = shown;
         const fits = [...overlays, primary].map(fit => ({
-            key: fit.key, label: METHODS[fit.key].name, g: fit.g, step: METHODS[fit.key].step,
+            key: fit.key, label: fitName(fit), g: fit.g, step: METHODS[fit.key].step,
             runs: localExtremes(fit.g, METHODS[fit.key].extremesTol).runs,
             colorVar: METHODS[fit.key].color, primary: fit === primary,
         }));
@@ -806,7 +923,8 @@ async function startup() {
             ? { x: state.xCol < 0 ? 'row' : base.columns[state.xCol], y: base.columns[state.yCol] } : {};
         const csv = toCsv(exportColumns({
             x: base.x, y: base.y, f: base.f, names,
-            fits: [primary, ...overlays].map(fit => ({ key: fit.key, g: fit.g })),
+            fits: [primary, ...overlays].map(fit => ({
+                key: fit.shapeKey && fit.shapeKey !== 'none' ? `${fit.key}_${fit.shapeKey}` : fit.key, g: fit.g })),
             band: band ? { key: state.band, lb: band.lb, ub: band.ub } : null,
             exact: exact?.lb ? exact : null,
         }));

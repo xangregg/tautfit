@@ -57,6 +57,16 @@ export function exactBoundsInWorker(spec, onProgress) {
 }
 
 /**
+ * Smallest τ admitting a shape (src/core/shapetest.js) in the worker.
+ *
+ * @param {object} spec  shapeThreshold spec without the HiGHS instance
+ * @returns {Promise<import('../core/shapetest.js').ShapeThreshold>}
+ */
+export function shapeThresholdInWorker(spec) {
+    return request({ task: 'shapeThreshold', spec });
+}
+
+/**
  * Monte Carlo sample of the multiscale statistic (src/core/calibrate.js) in the worker.
  *
  * @param {{n: number, lambda: number, family: 'chosen'|'all', B: number, seed: number,

@@ -133,6 +133,17 @@ Problems (all subject to g ∈ Aₙ, §1.3):
 
 LP solutions may be non-unique; HiGHS returns a vertex. That's acceptable; note it in the UI tooltip.
 
+*Added after M7 (user request): shape-constrained fits and a shape test.* The LP fits (not `combined`) take an
+optional shape (decreasing, increasing, convex, concave), using the same divided-difference rows as the exact
+bounds (§1.9): the simplest function in Aₙ ∩ shape. When that is empty, the app shows the unconstrained fit and
+says how far off the shape is: `shapetest.shapeThreshold` solves one LP, min c s.t. |Σ_I(y − g)| ≤ c√|I| and
+g has the shape (linear in (g, c)), giving τ_min = (c_min/σ)²/log n. With the Monte Carlo sample for the λ family
+(n ≤ 2000), 1 − coverage(τ_min) is a p-value for "f has the shape": if f has it, f ∈ Aₙ(τ) with probability
+coverage(τ), and then Aₙ(τ) ∩ shape ≠ ∅. Motivation: a user data set (n = 28) whose decreasing band was empty
+at the start. A decreasing fit needs τ ≥ 3.575, where Aₙ covers 90–91% at n = 28 (Monte Carlo), so p ≈ 0.09:
+"decreasing" is rejected at τ = 3 (which covers only 84–86% at this n) but not at 95%. The calibrated τ (4.29)
+admits it. Tests: test/shapetest.test.js; `check:ui` check 4.
+
 Numerics: solve in standardized units (y − mean(y)) / σ̂ and transform back. With dyadic 𝓘ₙ the LP has
 ≈ 2n variables and ≈ 6n rows, fine for n up to a few thousand.
 
@@ -188,6 +199,11 @@ v1: smoothness bounds only for equally spaced x (disable with an explanation oth
 
 lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monotone, convex, or sign pattern).
 2n LPs; enable only for n ≤ 300 and run in the worker with progress.
+
+*Fixed after M7:* when τ is within ~1e−8 (relative) of the smallest τ admitting the shape, Aₙ ∩ shape is empty
+only to within solver tolerance: the first solve found it feasible and a later bound infeasible, and
+`exactBounds` threw. On the user data above, 98 of 201 values of τ just below τ_min threw. Now reported as
+`{status: 'infeasible', marginal: true}`; regression test in test/shapetest.test.js.
 
 ### 1.10 Unequal spacing and ties
 
@@ -274,6 +290,8 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
 | `extremes.js` | runs, local extremes with plateaus, monotone sign pattern |
 | `lp-build.js` | builds CPLEX-LP-format strings for every §1.6/§1.9 problem |
 | `bounds.js` | monotone, piecewise monotone, convex, piecewise convex, smoothness-K bounds; O(n²) references |
+| `exact.js` | exact LP bounds under a shape (§1.9) |
+| `shapetest.js` | smallest τ admitting a shape (one LP), for the shape test (§1.6, after M7) |
 
 ### LP worker (`src/lp-worker.js`)
 
@@ -464,9 +482,11 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         (primary first), band and exact bounds, full precision, Inf/-Inf for infinite edges, user column names.
         Toolbar: Copy link, Download CSV, About (a `<dialog>`). Tests: test/urlstate.test.js,
         test/export.test.js; `npm run check:ui` gained a link round-trip check (mutation-tested).
-- [ ] GitHub Pages from main branch root; verify .wasm loads from Pages
+- [x] GitHub Pages from main branch root; verify .wasm loads from Pages
       → app renamed tautfit (repo and site name; the local folder is still nicefit). `.nojekyll` added so Pages
-        serves files as-is.
+        serves files as-is. Live at https://xangregg.github.io/tautfit/ (repo xangregg/tautfit). Pages serves
+        highs.wasm as `application/wasm` (streaming instantiation works). The full `tools/ui-checks.js` passes
+        against the live site with no console errors; exact LP bounds on exp(5t), n = 200: 401 LPs in 0.64 s.
 
 ### M8 — Later: "least ambitious fit" on top of Aₙ
 Ladder of simplicity checked by tiny LPs inside Aₙ: constant feasible? → linear (a + b·x) feasible? →

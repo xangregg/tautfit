@@ -8,7 +8,7 @@
 // No DOM use: runs in Node for tests (CompressionStream is global in Node ≥ 18 and in browsers).
 
 import { SIGNALS } from '../core/signals.js';
-import { METHOD_KEYS } from './methods.js';
+import { METHOD_KEYS, FIT_SHAPE_KEYS } from './methods.js';
 import { BAND_KEYS } from './bands.js';
 
 const MAX_DATA_CHARS = 8000; // encoded data longer than this stays out of the link (chat apps truncate long URLs)
@@ -66,6 +66,7 @@ const FIELDS = {
         read: s => (s === '' ? [] : s.split(',').filter(k => METHOD_KEYS.includes(k))),
     },
     fixExtremes: bool,
+    fitShape: enumOf(FIT_SHAPE_KEYS),
     band: enumOf(BAND_KEYS),
     theta: num(1.05),
     kMultiple: num(1, 4),

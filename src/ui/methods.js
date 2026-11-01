@@ -57,3 +57,29 @@ export const METHODS = {
 };
 
 export const METHOD_KEYS = Object.keys(METHODS);
+
+/**
+ * Shape constraints for the fit: the simplest function in Aₙ that also has the shape. They apply to the
+ * LP methods except `combined`, which takes its shape from the taut string.
+ *
+ * @type {Record<string, {label: string, name: string, shape: import('../core/lp-build.js').Shape|null}>}
+ */
+export const FIT_SHAPES = {
+    none: { label: 'None', name: '', shape: null },
+    decreasing: { label: 'Decreasing', name: 'decreasing', shape: { type: 'monotone', direction: -1 } },
+    increasing: { label: 'Increasing', name: 'increasing', shape: { type: 'monotone', direction: 1 } },
+    convex: { label: 'Convex', name: 'convex', shape: { type: 'convex' } },
+    concave: { label: 'Concave', name: 'concave', shape: { type: 'convex', concave: true } },
+};
+
+export const FIT_SHAPE_KEYS = Object.keys(FIT_SHAPES);
+
+/**
+ * Whether a shape constraint applies to a method.
+ *
+ * @param {string} methodKey
+ * @returns {boolean}
+ */
+export function takesShape(methodKey) {
+    return Boolean(METHODS[methodKey].lp) && methodKey !== 'combined';
+}

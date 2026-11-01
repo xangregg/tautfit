@@ -93,6 +93,32 @@
     sigma = [...document.querySelectorAll('#controls select')].find(s => [...s.options].some(o => o.value === 'gsjs'));
     sigma.value = 'diff';
     sigma.dispatchEvent(new Event('change'));
+
+    // 4. Shape-constrained fit: on data whose early values rise, a decreasing min TV(g′) is not in Aₙ at
+    //    τ = 3; the readouts say so and give the smallest τ admitting it (3.575, src/core/shapetest.js).
+    const findSelect = value => [...document.querySelectorAll('#controls select')]
+        .find(s => [...s.options].some(o => o.value === value));
+    const setSelect = (sel, value) => {
+        sel.value = value;
+        sel.dispatchEvent(new Event('change'));
+    };
+    const ta2 = document.querySelector('#controls textarea');
+    ta2.value = 'age,y\n22.98,0.8226\n24.10,0.4582\n24.29,0.8461\n25.03,0.8975\n25.03,0.9256\n27.83,0.8137\n'
+        + '29.69,0.4400\n30.06,0.5755\n30.06,0.9260\n43.11,0.5204\n43.11,0.4924\n44.41,0.4037\n44.97,0.4458\n'
+        + '47.20,0.3993\n48.88,0.4181\n49.25,0.5630\n51.30,0.4510\n54.10,0.4045\n61.18,0.4284\n61.93,0.4892\n'
+        + '62.11,0.4612\n63.23,0.4099\n63.79,0.4566\n64.72,0.4567\n65.09,0.3680\n65.84,0.5456\n67.70,0.5504\n71.80,0.4713\n';
+    ta2.dispatchEvent(new Event('input'));
+    await wait(400);
+    setSelect(findSelect('minTV2'), 'minTV1');
+    setSelect(findSelect('decreasing'), 'decreasing');
+    await until(() => /needs τ ≥\s*\n?\s*3\.\d/.test(readoutText()) && /p [≈<]/.test(readoutText()), 20000);
+    const warning = [...document.querySelectorAll('#readouts .warning')].map(w => w.innerText).join(' ');
+    const shapeOk = /No decreasing function is in Aₙ at τ = 3; one needs τ ≥ 3\.57/.test(warning);
+    if (!shapeOk)
+        console.error(`shape test readout missing or wrong: ${warning}`);
+    results.push({ key: 'shape test', ok: shapeOk });
+    setSelect(findSelect('decreasing'), 'none');
+    setSelect(findSelect('minTV2'), 'taut');
     const srcNow = document.getElementById('source'); // controls are rebuilt when a link is followed
     srcNow.value = 'blocks';
     srcNow.dispatchEvent(new Event('change'));

@@ -5,6 +5,7 @@
 //   {id, lp, options}               → {id, status, objective, names, primal: Float64Array, ms}
 //   {id, task: 'regularize', spec}  → {id, ...RegularizeResult}   (see src/core/regularize.js)
 //   {id, task: 'exactBounds', spec} → {id, progress} … then {id, status, lb, ub, solves, ms}
+//   {id, task: 'shapeThreshold', spec} → {id, status, c, tau, ms}   (see src/core/shapetest.js)
 //   {id, task: 'calibrate', spec}   → {id, progress} … then {id, sorted: Float64Array}
 //                                     spec: {n, lambda, family: 'chosen'|'all', B, seed,
 //                                            sigmaEstimator: 'diff'|'gsjs'|'none', x}
@@ -17,6 +18,7 @@ import loadHighs from '../vendor/highs/highs.mjs';
 import { solveLP } from './core/lp-solve.js';
 import { regularize } from './core/regularize.js';
 import { exactBounds } from './core/exact.js';
+import { shapeThreshold } from './core/shapetest.js';
 import { simulateMaxStatistics, sigmaPlugIn } from './core/calibrate.js';
 import { multiresolution, allIntervals, xIntervalFamily, allXIntervals } from './core/intervals.js';
 
@@ -52,6 +54,9 @@ self.addEventListener('message', async event => {
         else if (task === 'exactBounds') {
             const result = exactBounds(highs, spec, progressReporter(id));
             self.postMessage({ id, ...result }, result.lb ? [result.lb.buffer, result.ub.buffer] : []);
+        }
+        else if (task === 'shapeThreshold') {
+            self.postMessage({ id, ...shapeThreshold(highs, spec) });
         }
         else if (task === 'calibrate') {
             let intervals;
