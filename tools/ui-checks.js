@@ -44,5 +44,36 @@
         if (!ok)
             console.error(`${key}: residual view shows ${red} violation pixels but readout says ${violated} violated`);
     }
+
+    // 2. Gap connectors: none for equally spaced data; for data with a wide gap in x, the step fit is
+    //    bridged by a dotted connector between the two data points instead of a jump at the midpoint.
+    //    (Regression: with x = …, 10, 20, … the taut string was drawn jumping at x = 15.)
+    method.value = 'taut';
+    method.dispatchEvent(new Event('change'));
+    await until(() => !document.getElementById('charts').classList.contains('pending'));
+    const connectors = () => [...document.querySelectorAll('#main-chart .gap-connector')].filter(p => p.getAttribute('d'));
+    if (connectors().length !== 0)
+        console.error('gap connectors drawn for equally spaced data');
+    const src = document.getElementById('source');
+    src.value = 'user';
+    src.dispatchEvent(new Event('change'));
+    await wait(50);
+    const ta = document.querySelector('#controls textarea');
+    ta.value = 'x,y\n1,1\n2,2\n4,4\n6,5\n7,5.6\n8,6\n9,6.2\n10,6.5\n20,8\n21,7\n';
+    ta.dispatchEvent(new Event('input'));
+    await wait(400);
+    const sigma = [...document.querySelectorAll('#controls select')].find(s => [...s.options].some(o => o.value === 'gsjs'));
+    sigma.value = 'gsjs';
+    sigma.dispatchEvent(new Event('change'));
+    await until(() => !document.getElementById('charts').classList.contains('pending'));
+    await wait(50);
+    const gapOk = connectors().length > 0;
+    if (!gapOk)
+        console.error('no gap connector for data with a wide gap in x');
+    results.push({ key: 'gap connectors', ok: gapOk });
+    sigma.value = 'diff';
+    sigma.dispatchEvent(new Event('change'));
+    src.value = 'blocks';
+    src.dispatchEvent(new Event('change'));
     return results;
 })()

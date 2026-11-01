@@ -15,6 +15,10 @@ const MARK_INSET = 2; // px trimmed from each end of a plateau mark so adjacent 
 const MAX_MARKS = 100; // above this many extremes the marks are an unreadable band; the count is in the legend
 const PRIMARY_WIDTH = 2.5; // px
 const OVERLAY_WIDTH = 1.5; // px
+// A spacing more than GAP_FACTOR × the median spacing is a gap: a step fit has no supported value there,
+// so instead of a jump at the cell boundary (the midpoint) it gets a dotted connector between the data.
+const GAP_FACTOR = 3;
+const LONE_TICK = 3; // px half-width of the tick for a single point stranded between gaps
 const fmt = d3.format('.4~g');
 
 /**
@@ -65,6 +69,7 @@ export function createMainChart(container) {
     const gGrid = svg.append('g').attr('class', 'grid');
     const gBand = svg.append('g').attr('class', 'band').attr('clip-path', `url(#${clipId})`);
     const gHighlight = svg.append('rect').attr('class', 'interval-highlight').attr('visibility', 'hidden');
+    const gGaps = svg.append('g').attr('class', 'gap-connectors').attr('clip-path', `url(#${clipId})`);
     const gLines = svg.append('g').attr('clip-path', `url(#${clipId})`);
     const gMarks = svg.append('g').attr('class', 'extreme-marks');
     const gAxisX = svg.append('g').attr('class', 'axis');
@@ -206,25 +211,83 @@ export function createMainChart(container) {
                 }
             }
         }
-        // A piecewise-constant fit is drawn over each observation's cell, so plateaus show their extent.
+        // gapAfter[i]: the spacing x[i] → x[i+1] is a gap (see GAP_FACTOR)
+        const spacings = [];
+        for (let i = 1; i < n; i++) {
+            if (x[i] > x[i - 1])
+                spacings.push(x[i] - x[i - 1]);
+        }
+        spacings.sort((a, b) => a - b);
+        const typical = spacings.length ? spacings[Math.floor(spacings.length / 2)] : 0;
+        const gapAfter = new Uint8Array(Math.max(0, n - 1));
+        let anyGap = false;
+        for (let i = 0; i + 1 < n; i++) {
+            if (typical > 0 && x[i + 1] - x[i] > GAP_FACTOR * typical) {
+                gapAfter[i] = 1;
+                anyGap = true;
+            }
+        }
+
+        // A piecewise-constant fit is drawn over each observation's cell, so plateaus show their extent,
+        // except across gaps, where the solid line stops at the data and a dotted connector bridges it.
         const steps = fit => {
             let d = '';
+            let dots = '';
+            let prev = null;
+            const segment = (a, b, yv) => {
+                // a lone point between gaps would have zero width; give it a short tick
+                if (b - a < 1e-9)
+                    return `M${a - LONE_TICK},${yv}H${b + LONE_TICK}`;
+                return `M${a},${yv}H${b}`;
+            };
             for (const r of fit.runs) {
                 const yv = sy(fit.g[r.start]);
-                d += d ? `V${yv}` : `M${sx(edges[r.start])},${yv}`;
-                d += `H${sx(edges[r.end + 1])}`;
+                const gapBefore = r.start > 0 && gapAfter[r.start - 1];
+                let a = gapBefore ? sx(x[r.start]) : sx(edges[r.start]);
+                if (prev) {
+                    if (gapBefore)
+                        dots += `M${prev.x},${prev.y}L${a},${yv}`;
+                    else
+                        d += `M${prev.x},${prev.y}V${yv}`; // jump at the shared cell edge
+                }
+                for (let i = r.start; i < r.end; i++) {
+                    if (gapAfter[i]) {
+                        const left = sx(x[i]);
+                        const right = sx(x[i + 1]);
+                        d += segment(a, left, yv);
+                        dots += `M${left},${yv}L${right},${yv}`;
+                        a = right;
+                    }
+                }
+                const gapAfterRun = r.end < n - 1 && gapAfter[r.end];
+                const b = gapAfterRun ? sx(x[r.end]) : sx(edges[r.end + 1]);
+                d += segment(a, b, yv);
+                prev = { x: b, y: yv };
             }
-            return d;
+            return { d, dots };
         };
         const series = [];
         if (f)
             series.push({ key: 'truth', label: 'true f', d: line(f), color: colors['series-2'], width: 1.5 });
+        const gapPaths = [];
         for (const fit of m.fits) {
-            series.push({
-                key: fit.key, label: fit.label, d: fit.step ? steps(fit) : line(fit.g),
-                color: cssColor(fit.colorVar), width: fit.primary ? PRIMARY_WIDTH : OVERLAY_WIDTH,
-            });
+            const color = cssColor(fit.colorVar);
+            let d;
+            if (fit.step) {
+                const st = steps(fit);
+                d = st.d;
+                if (st.dots)
+                    gapPaths.push({ key: fit.key, d: st.dots, color });
+            }
+            else {
+                d = line(fit.g);
+            }
+            series.push({ key: fit.key, label: fit.label, d, color, width: fit.primary ? PRIMARY_WIDTH : OVERLAY_WIDTH });
         }
+        gGaps.selectAll('path').data(gapPaths, g => g.key).join('path')
+            .attr('class', 'gap-connector')
+            .attr('stroke', g => g.color)
+            .attr('d', g => g.d);
         gLines.selectAll('path').data(series, d => d.key).join('path')
             .attr('fill', 'none')
             .attr('stroke', d => d.color)
@@ -240,15 +303,29 @@ export function createMainChart(container) {
             e.append('path');
             return e;
         });
+        // A plateau's extent stops at the data on the side of a gap, like the step line.
+        const span = d => {
+            const a = d.start > 0 && gapAfter[d.start - 1] ? x[d.start] : edges[d.start];
+            const b = d.end < n - 1 && gapAfter[d.end] ? x[d.end] : edges[d.end + 1];
+            return [sx(a), sx(b)];
+        };
         marks.select('line')
-            .attr('x1', d => Math.min(sx(edges[d.start]) + MARK_INSET, sx((edges[d.start] + edges[d.end + 1]) / 2)))
-            .attr('x2', d => Math.max(sx(edges[d.end + 1]) - MARK_INSET, sx((edges[d.start] + edges[d.end + 1]) / 2)))
+            .attr('x1', d => {
+                const [a, b] = span(d);
+                return Math.min(a + MARK_INSET, (a + b) / 2);
+            })
+            .attr('x2', d => {
+                const [a, b] = span(d);
+                return Math.max(b - MARK_INSET, (a + b) / 2);
+            })
             .attr('y1', markY).attr('y2', markY)
             .attr('stroke', colors.ink);
         marks.select('path')
             .attr('d', d3.symbol(d3.symbolTriangle, MARK_SIZE)())
-            .attr('transform', d => `translate(${sx((edges[d.start] + edges[d.end + 1]) / 2)},${markY})`
-                + (d.type === 'min' ? ' rotate(180)' : ''))
+            .attr('transform', d => {
+                const [a, b] = span(d);
+                return `translate(${(a + b) / 2},${markY})${d.type === 'min' ? ' rotate(180)' : ''}`;
+            })
             .attr('fill', colors.ink);
 
         const items = [{ label: 'data', color: colors.muted, dot: true }, ...series];
@@ -256,6 +333,8 @@ export function createMainChart(container) {
             items.push({ label: m.band.label, color: colors['band'], box: true });
         if (m.band && m.exact)
             items.push({ label: m.exact.label, color: colors.ink, glyph: '┄' });
+        if (gapPaths.length && anyGap)
+            items.push({ label: 'gap in x: step fit undefined between the data', color: colors['ink-2'], glyph: '┈' });
         if (m.boxesLabel)
             items.push({ label: m.boxesLabel, color: colors['ink-2'], glyph: '▭' });
         if (shown.length)

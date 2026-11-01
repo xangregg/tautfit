@@ -282,7 +282,10 @@ lbᵢ / ubᵢ = min / max gᵢ subject to Aₙ plus the shape constraints (monot
 ### UI (`src/ui/`, D3 via import map)
 
 - **Main chart:** points (small, translucent), fit line(s) (taut string drawn as steps), band ribbon,
-  extreme plateaus marked on the x-axis.
+  extreme plateaus marked on the x-axis. *(Added after M5:)* step fits are drawn over each point's cell (edges at
+  midpoints), except across gaps in x (spacing > 3× the median): there the solid line stops at the data and a
+  dotted connector joins the two points, and plateau marks stop at the data too, so no jump or extreme is drawn
+  at a position with no data. Line fits and the residual view / Aₙ boxes keep the cell convention.
 - **Residual view under the main chart:** one row per resolution level k, one cell per interval, colour =
   |w(I)|/c (sequential scale, distinct colour for > 1). This is the picture that explains Aₙ.
 - **Aₙ boxes (added after M5):** each constraint of eq. 7 drawn on the main chart as a box spanning its interval's
