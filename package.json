@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Browser explorer for Davies, Kovac & Meise (2009) nonparametric regression: confidence regions, taut string, LP regularization, honest bands",
   "type": "module",
+  "license": "0BSD",
   "private": true,
   "engines": {
     "node": ">=20"
