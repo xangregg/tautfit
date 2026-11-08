@@ -26,6 +26,7 @@ import { BANDS } from './bands.js';
 import { stateToHash, hashToState, PANE_COUNTS } from './urlstate.js';
 import { toCsv, exportColumns } from './export.js';
 import { createHistory } from './history.js';
+import { sentence } from './format.js';
 import {
     monotoneBounds, piecewiseMonotoneBounds, convexBounds, piecewiseConvexBounds, curvatureSegments,
     smoothnessBounds, smoothnessKMin, crossings,
@@ -582,13 +583,6 @@ function verdictText(base, fit) {
             + `consistent with the data. ${extremes}.`;
     }
     return `: the smallest ${fit.lp.objectiveLabel} of any function in Aₙ is ${fmt(fit.lp.objective)}; ${extremes}.`;
-}
-
-// A note as a sentence: a leading Latin letter capitalized (a symbol such as λ or τ keeps its case, or it would
-// read as another symbol), and a period added.
-function sentence(text) {
-    const t = /^[a-z]/.test(text) ? text.charAt(0).toUpperCase() + text.slice(1) : text;
-    return /[.!?]$/.test(t) ? t : `${t}.`;
 }
 
 /**
