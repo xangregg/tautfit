@@ -549,7 +549,14 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         exact bounds over all intervals (spanning at least the share).
         Fixed on the way: readout notes no longer capitalize a leading λ or τ (they read Λ, Τ), and "τ = 3 would
         cover" says "> 99.95%" instead of "100%" when every calibration sample is covered.
-- [ ] Advanced subsections (§10)
+- [x] Advanced subsections (§10)
+      → a collapsed "Advanced" at the end of the region section (λ, σ estimate with its pure-error note, fix σ,
+        and the calibration box: α, calibrate for, include estimating σ) and of the band section (θ, hidden without
+        a band). The fixed / calibrated radios, τ, the calibrated τ, the shortest interval and the boxes stay
+        outside: τ = 3 against a calibrated τ is the paper's main comparison. Every moved value stays in the
+        readouts with the details closed (λ in the intervals note; σ̂ or the fixed σ; α, the family and the σ̂
+        plug-in in the τ note; θ in the band's rows). The open state is not a setting (not in the link, not
+        undoable).
 
 ### M8 — Moved to a separate project: "least ambitious fit" on top of Aₙ
 Ladder of simplicity checked by tiny LPs inside Aₙ: constant feasible? → linear (a + b·x) feasible? →

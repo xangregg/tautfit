@@ -930,3 +930,24 @@ body.gallery main {
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
+
+/* Advanced: the rarely changed settings of a section, collapsed */
+#controls details {
+    margin-bottom: 0.5rem;
+}
+
+#controls summary {
+    cursor: pointer;
+    color: var(--ink-2);
+    font-size: 0.85rem;
+    margin-bottom: 0.35rem;
+}
+
+/* a value line directly in the panel (the calibrated τ) keeps the fields' spacing below it */
+#controls > .field-note {
+    margin-bottom: 0.5rem;
+}
+
+#controls details > input[type=number] {
+    margin-bottom: 0.5rem;
+}

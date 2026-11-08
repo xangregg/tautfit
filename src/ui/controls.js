@@ -346,6 +346,23 @@ export function createControls(container, state, onChange) {
         text: 'Each pane chooses its signal above its chart, at the signal\'s own n and σ with this seed; the other '
             + 'settings apply to every pane.' });
 
+    // Settings rarely changed from their defaults sit in a collapsed Advanced at the end of their section, so each
+    // section shows first what a user adjusts. Their values stay in the readouts (λ in the intervals note, σ̂ or the
+    // fixed σ, α and the calibration family in the τ note, θ in the band's rows). The open state is not a setting:
+    // not in the link, not undoable.
+    const regionAdvanced = el('details', {}, [
+        el('summary', { text: 'Advanced' }),
+        field('λ', lambdaInput, TIPS.lambda),
+        field('σ estimate', sigmaMethod, TIPS.sigmaMethod, sigmaNote),
+        check(sigmaFixed, 'fix σ', TIPS.sigmaFixed),
+        sigmaFixedValue,
+        calBox,
+    ]);
+    const bandAdvanced = el('details', {}, [
+        el('summary', { text: 'Advanced' }),
+        field('θ', thetaInput, TIPS.theta),
+    ]);
+
     container.append(
         heading('Data', TIPS.dataHead),
         sourceField,
@@ -359,14 +376,10 @@ export function createControls(container, state, onChange) {
             infoIcon(TIPS.tauMode, 'fixed or calibrated τ'),
         ]),
         field('τ', tauInput, TIPS.tau),
-        calBox,
         tauValue,
-        field('λ', lambdaInput, TIPS.lambda),
         field('shortest interval', el('div', { class: 'slider' }, [shareInput, shareOut]), TIPS.anShare),
-        field('σ estimate', sigmaMethod, TIPS.sigmaMethod, sigmaNote),
-        check(sigmaFixed, 'fix σ', TIPS.sigmaFixed),
-        sigmaFixedValue,
         field('Aₙ boxes on the chart', boxes, TIPS.boxes),
+        regionAdvanced,
         heading('Fit', TIPS.fitHead),
         field('method', method, TIPS.method),
         field('constrain the fit to be', fitShape, fitShapeInfo),
@@ -376,8 +389,8 @@ export function createControls(container, state, onChange) {
         heading('Confidence band', TIPS.bandHead),
         field('assume f is', band, TIPS.band, bandNote),
         kBox,
-        field('θ', thetaInput, TIPS.theta),
         exactBox,
+        bandAdvanced,
     );
 
     let lastColumns = null;
@@ -430,6 +443,8 @@ export function createControls(container, state, onChange) {
         bandNote.hidden = !(BANDS[st.band].needsEqual && !equallySpaced);
         bandNote.textContent = 'needs equally spaced x; choose another band';
         kBox.hidden = st.band !== 'smooth';
+        // θ is the fast bands' window grid: nothing to set without a band
+        bandAdvanced.hidden = st.band === 'none';
         const calibrated = st.tauMode === 'calibrated';
         tauInput.disabled = calibrated;
         calBox.hidden = !calibrated;
