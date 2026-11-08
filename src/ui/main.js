@@ -14,6 +14,7 @@ import { threshold, checkRegion, constraintBoxes } from '../core/region.js';
 import { tautStringRegression } from '../core/tautstring.js';
 import { localExtremes, stepSigns } from '../core/extremes.js';
 import { createControls } from './controls.js';
+import { infoIcon } from './info.js';
 import { createMainChart } from './chart.js';
 import { createResidualView } from './residual.js';
 import { cellEdges } from './layout.js';
@@ -43,6 +44,8 @@ const SMALL_N = 50; // below this, warn that σ̂ and τ = 3 are rough (the pape
 const INFLATION_K = 4;
 const HASH_DEBOUNCE = 250; // ms between URL hash updates while settings change
 const MESSAGE_MS = 6000; // how long toolbar messages stay up
+const SIGMA_HAT_TIP = 'An estimate of the noise\'s standard deviation σ from the data.';
+const EXACT_TIP = 'The 2n LPs for the smallest and largest value at each x over Aₙ ∩ the shape (§5.2.1).';
 
 const state = {
     source: 'blocks',
@@ -289,16 +292,24 @@ function bandCoverageNote(base, st) {
 
 function bandRows(base, band, st, exact) {
     const rows = [];
-    const add = (label, value, title) => rows.push({ label, value, title });
-    add('band', BANDS[st.band].name, band.extra || undefined);
-    add('θ', fmt(st.theta), 'fast bounds on a geometric window grid');
-    if (st.band === 'smooth')
-        add('K_min (fast)', fmt(base.kMin), 'smallest K with a non-empty band; a lower bound on ‖g″‖∞ in x units');
+    const add = (label, value, note, tip) => rows.push({ label, value, note, tip });
+    add('band', BANDS[st.band].name, band.extra || undefined, sentence(BANDS[st.band].note));
+    add('θ', fmt(st.theta), undefined, 'The window grid ratio of the fast bounds: their window radii grow by the '
+        + 'factor θ.');
+    if (st.band === 'smooth') {
+        add('K_min (fast)', fmt(base.kMin), undefined, 'The smallest K for which the band is not empty: a lower '
+            + 'bound on ‖g″‖∞ for any f in Aₙ, in x units.');
+    }
     add('empty at', `${fmtInt(band.empty)} of ${fmtInt(base.n)} points`,
-        band.empty ? 'the assumption is inconsistent with the data there' : 'the assumption is consistent with the data');
-    add('coverage', bandCoverageNote(base, st).value, bandCoverageNote(base, st).note);
-    if (band.inside !== null)
-        add('true f inside', band.inside ? 'yes' : 'no', 'for this run of the simulation');
+        band.empty ? 'the assumption is inconsistent with the data there' : 'the assumption is consistent with the data',
+        'Points where the band\'s lower bound is above its upper bound.');
+    const coverage = bandCoverageNote(base, st);
+    add('coverage', coverage.value, coverage.note, 'The probability that the band contains f at every x at once, '
+        + 'when f has the shape assumed.');
+    if (band.inside !== null) {
+        add('true f inside', band.inside ? 'yes' : 'no', undefined, 'Whether the simulated signal lies inside the '
+            + 'band at every x, in this sample.');
+    }
     if (exact?.lb) {
         let wExact = 0;
         let wFast = 0;
@@ -312,10 +323,12 @@ function bandRows(base, band, st, exact) {
                 narrower++;
         }
         add('exact LP bounds', `${fmtInt(exact.solves)} LPs, ${fmt(exact.ms / 1000)} s`,
-            `Aₙ with the λ family; mean width ${fmt(wExact)} vs fast ${fmt(wFast)}; narrower at ${narrower} of ${base.n} points`);
+            `Aₙ with the λ family; mean width ${fmt(wExact)} vs fast ${fmt(wFast)}; narrower at ${narrower} of ${base.n} points`,
+            EXACT_TIP);
         if (base.f) {
             const inside = base.f.every((v, i) => exact.lb[i] - 1e-9 <= v && v <= exact.ub[i] + 1e-9);
-            add('true f inside exact', inside ? 'yes' : 'no');
+            add('true f inside exact', inside ? 'yes' : 'no', undefined, 'Whether the simulated signal lies inside '
+                + 'the exact LP bounds at every x, in this sample.');
         }
     }
     else if (exact?.status) {
@@ -323,7 +336,7 @@ function bandRows(base, band, st, exact) {
             ? 'Aₙ ∩ shape is empty to within solver tolerance: τ is at the edge of admitting this shape'
             : 'no function in Aₙ has this shape: the assumption is rejected';
         add('exact LP bounds', exact.status === 'infeasible' ? 'infeasible' : exact.status,
-            exact.status === 'infeasible' ? why : undefined);
+            exact.status === 'infeasible' ? why : undefined, EXACT_TIP);
     }
     return rows;
 }
@@ -331,62 +344,75 @@ function bandRows(base, band, st, exact) {
 function tauRow(base, st) {
     const t = base.tauInfo;
     if (t.mode === 'fixed')
-        return ['τ', fmt(t.tau), undefined];
+        return { label: 'τ', value: fmt(t.tau), tip: 'Aₙ\'s threshold parameter, in c = σ√(τ log n).' };
     const family = st.calibFamily === 'all' ? 'all intervals' : `λ = ${fmt(st.lambda)} family`;
     const plug = st.sigmaFixed !== null || !st.plugSigma ? ' with σ known'
         : st.sigmaMethod === 'gsjs' ? ' with GSJS σ̂' : ' with σ̂ (eq. 10)';
-    return ['τ (calibrated)', fmt(t.tau),
-        `Monte Carlo τₙ(${st.alpha}) for ${family}${plug}, B = ${CALIBRATION_B}; `
-        + `95% MC interval ${fmt(t.tauLo)}–${fmt(t.tauHi)}; τ = 3 would cover ${fmt(100 * t.cov3)}%`];
+    return { label: 'τ (calibrated)', value: fmt(t.tau),
+        note: `Monte Carlo τₙ(${st.alpha}) for ${family}${plug}, B = ${CALIBRATION_B}; `
+            + `95% MC interval ${fmt(t.tauLo)}–${fmt(t.tauHi)}; τ = 3 would cover ${fmt(100 * t.cov3)}%`,
+        tip: 'Aₙ\'s threshold parameter, in c = σ√(τ log n), chosen by Monte Carlo on pure noise so that Aₙ '
+            + 'contains f with probability α.' };
 }
 
 function readoutRows(base, fit, st, shape) {
     const rows = [];
-    const add = (label, value, title) => rows.push({ label, value, title });
-    add('n', fmtInt(base.n));
+    const add = (label, value, note, tip) => rows.push({ label, value, note, tip });
+    add('n', fmtInt(base.n), undefined, 'Number of observations.');
     const inUse = which => (st.sigmaFixed === null && which ? ' · used' : '');
     const rep = base.replicates;
     if (rep.pureErrorOnly) {
         // both estimators reduce to the same pure-error estimate
         add('σ̂', fmt(base.sigmaHat),
-            `spread within tied x (pure error, ${rep.df} df), robust; no trend enters${inUse(true)}`);
+            `spread within tied x (pure error, ${rep.df} df), robust; no trend enters${inUse(true)}`, SIGMA_HAT_TIP);
     }
     else {
         const tied = rep.df > 0 ? `, pooled with the spread within tied x (${rep.df} df)` : '';
-        add('σ̂ (eq. 10)', fmt(base.sigmaHat), `median |Δy| / (Φ⁻¹(0.75)·√2)${tied}${inUse(!base.useRobust)}`);
+        add('σ̂ (eq. 10)', fmt(base.sigmaHat), `median |Δy| / (Φ⁻¹(0.75)·√2)${tied}${inUse(!base.useRobust)}`,
+            SIGMA_HAT_TIP);
         if (Number.isFinite(base.sigmaRobust)) {
             add('σ̂ (GSJS)', fmt(base.sigmaRobust),
-                `median local linear residual, trend-robust (Gasser et al. 1986)${tied}${inUse(base.useRobust)}`);
+                `median local linear residual, trend-robust (Gasser et al. 1986)${tied}${inUse(base.useRobust)}`,
+                SIGMA_HAT_TIP);
         }
     }
     if (base.f)
-        add('true σ', fmt(st.sigma));
+        add('true σ', fmt(st.sigma), undefined, 'The standard deviation of the simulated noise.');
     if (st.sigmaFixed !== null)
-        add('σ used (fixed)', fmt(base.sigmaUsed));
-    add(...tauRow(base, st));
-    add('c = σ√(τ log n)', fmt(base.c));
-    add('|𝓘ₙ|', `${fmtInt(base.family.length)} intervals`, `λ = ${fmt(st.lambda)}, singletons included`);
-    add('fit', fitName(fit));
+        add('σ used (fixed)', fmt(base.sigmaUsed), undefined, 'The σ given under fix σ, used instead of σ̂.');
+    rows.push(tauRow(base, st));
+    add('threshold c', fmt(base.c), undefined, 'Aₙ\'s threshold, c = σ√(τ log n): a function is in Aₙ when '
+        + '|w(I)| ≤ c on every interval I of the family (eq. 7).');
+    add('intervals', fmtInt(base.family.length), `λ = ${fmt(st.lambda)}, singletons included`,
+        'The size of the interval family 𝓘ₙ that Aₙ checks (eq. 9): consecutive blocks of about λᵏ observations at '
+        + 'each level k.');
+    add('fit', fitName(fit), undefined, 'The fit drawn, with its shape constraint if any.');
     if (shape?.test)
         rows.push(...shapeTestRows(shape.test, Boolean(shape.failed)));
     if (fit.lp) {
-        add(fit.lp.objectiveLabel, fmt(fit.lp.objective),
-            'minimum over Aₙ, derivatives in x units; the minimizing g may not be unique (HiGHS returns a vertex)');
+        add(fit.lp.objectiveLabel, fmt(fit.lp.objective), undefined, 'The minimum over Aₙ of what the method '
+            + 'minimizes, with derivatives in x units. The minimizing g may not be unique (HiGHS returns a vertex).');
         add('LP', `${fit.lp.status}, ${fmtInt(Math.round(fit.lp.ms))} ms`,
-            `${fmtInt(fit.lp.rows)} rows × ${fmtInt(fit.lp.cols)} columns`);
+            `${fmtInt(fit.lp.rows)} rows × ${fmtInt(fit.lp.cols)} columns`,
+            'The linear program\'s status and solve time (HiGHS, in a worker).');
     }
     const { nMax, nMin } = fit.ext;
-    add('local extremes', fmtInt(nMax + nMin), `${nMax} max, ${nMin} min`);
+    add('local extremes', fmtInt(nMax + nMin), `${nMax} max, ${nMin} min`, 'Local maxima and minima of the fit; '
+        + 'a plateau counts once.');
     if (fit.key === 'taut') {
         add('iterations', fmtInt(base.taut.iterations),
-            base.taut.converged ? 'tube squeezes until the fit is in Aₙ' : 'stopped at the iteration cap');
+            base.taut.converged ? undefined : 'stopped at the iteration cap',
+            'Rounds of the taut string\'s squeezing: the tube narrows where the fit fails Aₙ, until it passes.');
     }
     const worst = base.family[fit.check.argMax];
     const onBoundary = fit.lp && fit.check.ok && fit.check.maxRatio >= 1 - LP_REGION_TOL;
     add('max |w(I)| / c', fit.check.maxRatio.toPrecision(onBoundary ? 10 : 4).replace(/\.?0+$/, ''),
         `at #${worst.lo + 1}–${worst.hi + 1} (|I| = ${worst.hi - worst.lo + 1})`
-        + (onBoundary ? '; on the boundary of Aₙ, as an LP optimum is (within solver tolerance)' : ''));
-    add('violated intervals', `${fmtInt(fit.check.violations)} of ${fmtInt(base.family.length)}`);
+        + (onBoundary ? '; on the boundary of Aₙ, as an LP optimum is (within solver tolerance)' : ''),
+        'The largest |w(I)| over the family, relative to c, where w(I) is the sum of the residuals over I divided by '
+        + '√|I|. The fit is in Aₙ when it is at most 1.');
+    add('violated intervals', `${fmtInt(fit.check.violations)} of ${fmtInt(base.family.length)}`, undefined,
+        'Intervals where |w(I)| > c, which the residual view marks. The fit is in Aₙ when there are none.');
     return rows;
 }
 
@@ -410,22 +436,23 @@ function coverageText(cov) {
 function shapeTestRows(test, failed) {
     const name = FIT_SHAPES[test.shapeKey].name;
     const rows = [{ label: 'shape', value: failed ? `${name} (no such fit in Aₙ)` : name,
-        title: `fit constrained to be ${name}: the simplest such function in Aₙ` }];
+        tip: `The fit is constrained to be ${name}: the simplest such function in Aₙ.` }];
     let value = '…';
-    let title = 'solving one LP for the smallest τ that admits the shape';
+    let note = 'solving one LP for the smallest τ that admits the shape';
     if (test.error) {
         value = test.error;
-        title = undefined;
+        note = undefined;
     }
     else if (!test.pending) {
         value = fmt(test.tau);
-        title = test.cov !== null
+        note = test.cov !== null
             ? `Aₙ at that τ covers ${coverageText(test.cov)} (Monte Carlo, B = ${CALIBRATION_B}, this n and design): `
                 + `${pText(test.cov)} for “f is ${name}”`
             : test.covPending ? 'computing the coverage of that τ…'
                 : `coverage not computed for n > ${CALIBRATE_ALL_MAX_N}`;
     }
-    rows.push({ label: `${name} needs τ ≥`, value, title });
+    rows.push({ label: `${name} needs τ ≥`, value, note, tip: `The smallest τ at which some ${name} function is in `
+        + 'Aₙ, from one LP: a test of the shape, whose p-value is one minus Aₙ\'s coverage at that τ.' });
     return rows;
 }
 
@@ -472,6 +499,27 @@ function verdictText(base, fit) {
     return `: the smallest ${fit.lp.objectiveLabel} of any function in Aₙ is ${fmt(fit.lp.objective)}; ${extremes}.`;
 }
 
+function sentence(text) {
+    const t = text.charAt(0).toUpperCase() + text.slice(1);
+    return /[.!?]$/.test(t) ? t : `${t}.`;
+}
+
+/**
+ * Readout rows {label, value, note?, tip?}: label and value shown; the tip (what the item is) and the note (how
+ * this value came about) behind an ⓘ on the label, so the readouts stay compact while every detail stays one
+ * hover or tap away.
+ */
+function appendRows(sel, rows) {
+    const dl = sel.append('dl');
+    for (const r of rows) {
+        const dt = dl.append('dt').text(r.label);
+        const text = [r.tip, r.note ? sentence(r.note) : ''].filter(Boolean).join(' ');
+        if (text)
+            dt.node().append(infoIcon(text, r.label));
+        dl.append('dd').text(r.value);
+    }
+}
+
 function renderReadouts(container, base, fit, st, band, exact, extraNotes, shape) {
     const sel = d3.select(container);
     sel.selectAll('*').remove();
@@ -483,22 +531,10 @@ function renderReadouts(container, base, fit, st, band, exact, extraNotes, shape
         sel.append('p').attr('class', 'warning').text(shapeWarning(base, shape.test, fit.key));
     for (const w of base.warnings)
         sel.append('p').attr('class', 'warning').text(w);
-    const dl = sel.append('dl');
-    for (const r of readoutRows(base, fit, st, shape)) {
-        dl.append('dt').text(r.label);
-        dl.append('dd').text(r.value);
-        if (r.title)
-            dl.append('dd').attr('class', 'dd-note').text(r.title);
-    }
+    appendRows(sel, readoutRows(base, fit, st, shape));
     if (band && !band.pending) {
         sel.append('h2').text('Band');
-        const bdl = sel.append('dl');
-        for (const r of bandRows(base, band, st, exact)) {
-            bdl.append('dt').text(r.label);
-            bdl.append('dd').text(r.value);
-            if (r.title)
-                bdl.append('dd').attr('class', 'dd-note').text(r.title);
-        }
+        appendRows(sel, bandRows(base, band, st, exact));
     }
     sel.append('ul').attr('class', 'notes').selectAll('li').data([...base.notes, ...extraNotes]).join('li').text(d => d);
 }

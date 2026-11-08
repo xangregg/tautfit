@@ -78,6 +78,11 @@
     box-sizing: border-box;
 }
 
+/* class rules that set display (.field, .check) would otherwise override the hidden attribute */
+[hidden] {
+    display: none !important;
+}
+
 body {
     margin: 0;
     padding: 1rem 1.25rem;
@@ -238,9 +243,21 @@ aside,
     font-size: 0.85rem;
 }
 
-.field-hint {
-    color: var(--muted);
+/* visible lines under a control: a computed value, or (warn) why the control is limited */
+.field-note {
+    display: block;
+    color: var(--ink-2);
     font-size: 0.75rem;
+}
+
+.field-note.warn::before {
+    content: '⚠ ';
+}
+
+.field-note + .field-note,
+.check + .field-note {
+    margin-top: -0.35rem;
+    margin-bottom: 0.5rem;
 }
 
 .group {
@@ -467,14 +484,6 @@ input[type=file] {
     white-space: nowrap;
 }
 
-#readouts dd.dd-note {
-    grid-column: 1 / -1;
-    margin-top: -0.25rem;
-    color: var(--muted);
-    font-size: 0.75rem;
-    white-space: normal;
-}
-
 .verdict {
     margin: 0 0 0.75rem;
 }
@@ -594,3 +603,91 @@ footer a {
     stroke-dasharray: 2 3;
 }
 
+/* --- ⓘ explanations (info.js) instead of inline hints */
+.info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.1em;
+    height: 1.1em;
+    margin-left: 0.2em;
+    border: 1px solid var(--muted);
+    border-radius: 50%;
+    color: var(--muted);
+    font: italic 600 0.7rem/1 Georgia, 'Times New Roman', serif;
+    vertical-align: 0.1em;
+    cursor: help;
+    user-select: none;
+}
+
+.info:hover,
+.info:focus-visible,
+.info[aria-expanded='true'] {
+    color: var(--ink);
+    border-color: var(--ink-2);
+    outline: none;
+}
+
+.info-tip {
+    position: absolute;
+    z-index: 20;
+    max-width: 19rem;
+    padding: 0.45rem 0.6rem;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+.info-tip p,
+.info-tip ul {
+    margin: 0;
+}
+
+.info-tip * + p,
+.info-tip * + ul {
+    margin-top: 0.35em;
+}
+
+.info-tip ul {
+    padding-left: 1.1em;
+}
+
+.info-tip li + li {
+    margin-top: 0.2em;
+}
+
+.field-label .info,
+h2 .info {
+    font-size: 0.65rem;
+}
+
+/* readout notes live in ⓘ tips; labels stay on one line (with their ⓘ), values wrap */
+#readouts p.claim .info,
+#readouts p.verdict .info {
+    margin-left: 0.3em;
+}
+
+#readouts dt {
+    white-space: nowrap;
+}
+
+#readouts dl {
+    grid-template-columns: max-content minmax(0, 1fr);
+}
+
+#readouts dd {
+    white-space: normal;
+}
+
+.radio-row {
+    align-items: center;
+}
+
+.radio-row .info {
+    margin-left: -0.5rem;
+    font-size: 0.65rem;
+}

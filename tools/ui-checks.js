@@ -15,8 +15,20 @@
         }
         return false;
     };
+    // a readout row's value by its label; the label is the dt's first text node (an ⓘ icon may follow it)
+    const readoutValue = test => {
+        const dt = [...document.querySelectorAll('#readouts dt')].find(d => test(d.firstChild?.nodeValue ?? ''));
+        return dt ? dt.nextElementSibling.innerText : null;
+    };
     const hexToRgb = hex => [1, 3, 5].map(i => parseInt(hex.trim().slice(i, i + 2), 16));
     const results = [];
+
+    // 0. Hidden controls are not drawn. (Regression: .field and .check set display, which overrode the hidden
+    //    attribute, so the K slider and "pin extremes" showed whatever the band and method.)
+    const shownHidden = [...document.querySelectorAll('#controls [hidden]')].filter(e => e.getClientRects().length);
+    if (shownHidden.length)
+        console.error(`hidden controls drawn: ${shownHidden.map(e => e.textContent.trim().slice(0, 30)).join('; ')}`);
+    results.push({ key: 'hidden controls', ok: !shownHidden.length });
     const method = [...document.querySelectorAll('#controls select')]
         .find(s => [...s.options].some(o => o.value === 'combined'));
     for (const key of [...method.options].map(o => o.value)) {
@@ -37,8 +49,7 @@
                 && Math.abs(px[i + 2] - violation[2]) < 6)
                 red++;
         }
-        const dt = [...document.querySelectorAll('#readouts dt')].find(d => d.innerText === 'violated intervals');
-        const violated = Number(dt.nextElementSibling.innerText.split(' of ')[0].replace(/,/g, ''));
+        const violated = Number(readoutValue(t => t === 'violated intervals').split(' of ')[0].replace(/,/g, ''));
         const ok = (red > 0) === (violated > 0);
         results.push({ key, violated, redPixels: red, ok });
         if (!ok)
@@ -111,7 +122,8 @@
     await wait(400);
     setSelect(findSelect('minTV2'), 'minTV1');
     setSelect(findSelect('decreasing'), 'decreasing');
-    await until(() => /needs τ ≥\s*\n?\s*3\.\d/.test(readoutText()) && /p [≈<]/.test(readoutText()), 20000);
+    await until(() => /^3\.\d/.test(readoutValue(t => t.endsWith('needs τ ≥')) ?? '')
+        && /p [≈<]/.test(readoutText()), 20000);
     const warning = [...document.querySelectorAll('#readouts .warning')].map(w => w.innerText).join(' ');
     const shapeOk = /No decreasing function is in Aₙ at τ = 3; one needs τ ≥ 3\.57/.test(warning);
     if (!shapeOk)

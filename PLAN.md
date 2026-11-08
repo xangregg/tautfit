@@ -343,6 +343,10 @@ only to within solver tolerance: the first solve found it feasible and a later b
 - Keep state in the URL hash for shareable links (dataset, seed, settings), not localStorage. *(M7: `urlstate.js`;
   small pasted data travels in the link, compressed.)*
 - **Toolbar (M7):** Copy link, Download CSV (`export.js`, what is on screen), About dialog.
+- **ⓘ tips (after M7):** explanations sit behind a small ⓘ after a label, shown on hover, focus or tap and pinned
+  by a click (`info.js`, lafspline's own module, copied as is; a line per paragraph, `- ` lines as a list, `**…**`
+  bold, built from text nodes). Visible: labels, inputs, values, warnings, the verdict, and the reasons a control
+  is unavailable (needs equally spaced x, n ≤ 300 for exact bounds, pure error with enough ties).
 
 ---
 
@@ -487,6 +491,19 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         serves files as-is. Live at https://xangregg.github.io/tautfit/ (repo xangregg/tautfit). Pages serves
         highs.wasm as `application/wasm` (streaming instantiation works). The full `tools/ui-checks.js` passes
         against the live site with no console errors; exact LP bounds on exp(5t), n = 200: 401 LPs in 0.64 s.
+
+### After M7 — UI refinements backported from lafspline (UI-TIPS.md)
+- [x] ⓘ tips instead of inline hints in the controls and readouts (UI-TIPS §1–5)
+      → `src/ui/info.js`; `controls.js` gathers its texts in `TIPS` (method and band tips are built from
+        `METHODS` and `BANDS`), short fields share a row; readout rows are `{label, value, note?, tip?}`, both behind
+        one ⓘ (`appendRows`); "c = σ√(τ log n)" became "threshold c" and "|𝓘ₙ|" "intervals". Fixed on the way: a
+        global `[hidden]` rule, since `.field` and `.check` set `display` and so overrode `hidden` (the K slider and
+        "pin extremes" showed whatever the band and method); `npm run check:ui` checks it.
+- [ ] Export menu: CSV, SVG, PNG, JPEG (§6)
+- [ ] Reset, Undo and Redo for the settings (§7)
+- [ ] Gallery view (§8)
+- [ ] Aₙ's shortest interval (§9)
+- [ ] Advanced subsections (§10)
 
 ### M8 — Moved to a separate project: "least ambitious fit" on top of Aₙ
 Ladder of simplicity checked by tiny LPs inside Aₙ: constant feasible? → linear (a + b·x) feasible? →
