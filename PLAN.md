@@ -493,20 +493,20 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         highs.wasm as `application/wasm` (streaming instantiation works). The full `tools/ui-checks.js` passes
         against the live site with no console errors; exact LP bounds on exp(5t), n = 200: 401 LPs in 0.64 s.
 
-### After M7 — UI refinements backported from lafspline (UI-TIPS.md)
-- [x] ⓘ tips instead of inline hints in the controls and readouts (UI-TIPS §1–5)
+### After M7 — UI refinements backported from lafspline
+- [x] ⓘ tips instead of inline hints in the controls and readouts
       → `src/ui/info.js`; `controls.js` gathers its texts in `TIPS` (method and band tips are built from
         `METHODS` and `BANDS`), short fields share a row; readout rows are `{label, value, note?, tip?}`, both behind
         one ⓘ (`appendRows`); "c = σ√(τ log n)" became "threshold c" and "|𝓘ₙ|" "intervals". Fixed on the way: a
         global `[hidden]` rule, since `.field` and `.check` set `display` and so overrode `hidden` (the K slider and
         "pin extremes" showed whatever the band and method); `npm run check:ui` checks it.
-- [x] Export menu: CSV, SVG, PNG, JPEG (§6)
+- [x] Export menu: CSV, SVG, PNG, JPEG
       → `chart.js` `toSvg`, ported from lafspline: the legend laid out and wrapped as on the page, points and Aₙ
         boxes as vector shapes (`boxShapes` feeds both the canvas and the SVG), the SVG layers cloned with their
         computed styles as SVG 1.1 attributes; 12 px of background around it. PNG and JPEG are the SVG drawn at 2×.
         The image uses the current color scheme; the residual view is not exported (said in the menu titles and the
         About text). The CSV is unchanged (byte-identical on sine with a band, exact bounds and an overlay).
-- [x] Reset, Undo and Redo for the settings (§7)
+- [x] Reset, Undo and Redo for the settings
       → `src/ui/history.js` and `test/history.test.js`, lafspline's own, copied as is (snapshots; a gesture on the
         same settings within 1 s is one step; 200 entries). `main.js`: `DATA_KEYS` (source, n, σ, seed, pasted data
         and its columns; the gallery's view and panes join them in §8) are never touched; a followed link and Reset
@@ -514,7 +514,7 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         a calibrated τ reuses the cached calibration (70 ms). `tools/check-page.mjs` no longer runs --eval on a page
         that did not get ready, and reports an eval exception as a problem: a failed jsDelivr load had shown up as
         a TypeError from ui-checks.js.
-- [x] Gallery view (§8)
+- [x] Gallery view
       → Single | Gallery in the toolbar: 4, 6 or 8 simulated signals at once, two per row, each at its own n and σ
         with the shared seed and settings; compact 215 px charts without axes (the tooltip has the values), one
         legend, a one-line footer (n, τ, the fit and its extremes, and only in the violation color: the fit ∉ Aₙ,
@@ -526,7 +526,7 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         boxes (no residual view). `urlstate.js`: `view` and `panes` last; panes only in the gallery; the seed and
         true f written in the gallery even when the single view shows pasted data. `npm run check:ui` checks the
         gallery and ↗.
-- [x] Aₙ's shortest interval (§9), 0 (the paper's family) by default
+- [x] Aₙ's shortest interval, 0 (the paper's family) by default
       → `intervals.js` (from lafspline's merged runs): `intervalSpan`, `shortestSpan`, `blockLevelsWithShortestSpan`,
         `withShortestSpan`; `xIntervalLevels`, `xIntervalFamily` and `allXIntervals` take a share, and at 0 return
         what they did. Every builder follows it: `computeBase` (family, levels, taut string, `regionKey`), the
@@ -549,7 +549,7 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         exact bounds over all intervals (spanning at least the share).
         Fixed on the way: readout notes no longer capitalize a leading λ or τ (they read Λ, Τ), and "τ = 3 would
         cover" says "> 99.95%" instead of "100%" when every calibration sample is covered.
-- [x] Advanced subsections (§10)
+- [x] Advanced subsections
       → a collapsed "Advanced" at the end of the region section (λ, σ estimate with its pure-error note, fix σ,
         and the calibration box: α, calibrate for, include estimating σ) and of the band section (θ, hidden without
         a band). The fixed / calibrated radios, τ, the calibrated τ, the shortest interval and the boxes stay
