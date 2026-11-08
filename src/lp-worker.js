@@ -60,10 +60,13 @@ self.addEventListener('message', async event => {
         }
         else if (task === 'calibrate') {
             let intervals;
+            // with a shortest interval (spec.share, which needs x): merged runs for the λ family, widened
+            // intervals for all of them, as Aₙ and the fast bands use
+            const share = spec.share ?? 0;
             if (spec.family === 'all')
-                intervals = spec.x ? allXIntervals(spec.x) : allIntervals(spec.n);
+                intervals = spec.x ? allXIntervals(spec.x, share) : allIntervals(spec.n);
             else
-                intervals = spec.x ? xIntervalFamily(spec.x, spec.lambda) : multiresolution(spec.n, spec.lambda);
+                intervals = spec.x ? xIntervalFamily(spec.x, spec.lambda, share) : multiresolution(spec.n, spec.lambda);
             const sorted = simulateMaxStatistics(spec.n, intervals,
                 { B: spec.B, seed: spec.seed, plugSigma: sigmaPlugIn(spec.sigmaEstimator, spec.x),
                     onProgress: progressReporter(id) });

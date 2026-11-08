@@ -9,7 +9,8 @@ import {
 import { simulate } from '../src/core/signals.js';
 import { sigmaMAD } from '../src/core/sigma.js';
 import { threshold } from '../src/core/region.js';
-import { createRng } from '../src/core/rng.js';
+import { createRng, normals } from '../src/core/rng.js';
+import { allXIntervals, shortestSpan } from '../src/core/intervals.js';
 
 const TAU = 3;
 const EPS = 1e-9; // absolute slack for "no tighter than" comparisons
@@ -158,3 +159,44 @@ for (const [label, signal, sigma, band] of [
         assert.ok(rate >= 0.95, `rate ${rate}`);
     });
 }
+
+// Shortest interval (minSpan): every bound comes only from windows spanning at least minSpan, so whenever f
+// satisfies the Aₙ constraints on all intervals spanning that much, the bands contain f, even with c set as tight
+// as f allows. With c that tight, the short windows a band would otherwise use can exclude f.
+test('with a shortest interval the bands contain any f that satisfies Aₙ on the intervals spanning enough', () => {
+    const n = 200;
+    const share = 0.1;
+    const x = Float64Array.from({ length: n }, (_, i) => (i + 1) / n);
+    const minSpan = shortestSpan(x, share);
+    const rng = createRng(11);
+    const z = normals(n, rng);
+    const cases = [
+        { name: 'monotone', f: t => Math.exp(2 * t), band: (y, c, o) => monotoneBounds(y, c, o) },
+        { name: 'convex', f: t => (t - 0.4) ** 2, band: (y, c, o) => convexBounds(y, c, o) },
+        { name: 'smooth', f: t => Math.sin(5 * t), band: (y, c, o) => smoothnessBounds(y, c, 25, 1 / n, o) },
+    ];
+    let excludedWithoutSpan = 0;
+    for (const { name, f, band } of cases) {
+        const fx = Float64Array.from(x, f);
+        const y = Float64Array.from(fx, (v, i) => v + 0.3 * z[i]);
+        // the tightest c for which f satisfies every constraint on the intervals spanning at least the share
+        let c = 0;
+        for (const iv of allXIntervals(x, share)) {
+            let sum = 0;
+            for (let i = iv.lo; i <= iv.hi; i++)
+                sum += y[i] - fx[i];
+            c = Math.max(c, Math.abs(sum) / Math.sqrt(iv.hi - iv.lo + 1));
+        }
+        c *= 1 + 1e-9;
+        for (const full of [false, true]) {
+            const b = band(y, c, { x, minSpan, full });
+            for (let i = 0; i < n; i++)
+                assert.ok(b.lb[i] - EPS <= fx[i] && fx[i] <= b.ub[i] + EPS, `${name} (full ${full}) excludes f at ${i}`);
+        }
+        const loose = band(y, c, { x, full: true });
+        if (fx.some((v, i) => v < loose.lb[i] - EPS || v > loose.ub[i] + EPS))
+            excludedWithoutSpan++;
+    }
+    assert.ok(excludedWithoutSpan > 0, 'the short windows matter for at least one band');
+    assert.throws(() => monotoneBounds(new Float64Array(5), 1, { minSpan: 0.1 }), RangeError);
+});

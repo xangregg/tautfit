@@ -7,7 +7,7 @@ const DEFAULTS = {
     source: 'blocks', n: 1024, sigma: 1, seed: 1, showTruth: true, userText: '', xCol: null, yCol: null,
     tau: 3, lambda: 2, sigmaFixed: null, sigmaMethod: 'diff', method: 'taut', overlays: [], fixExtremes: false, fitShape: 'none',
     band: 'none', theta: 1.5, kMultiple: 2, tauMode: 'fixed', alpha: 0.95, calibFamily: 'chosen', plugSigma: true,
-    exact: false, boxes: 'hover', view: 'single', panes: ['blocks', 'bumps', 'heavisine', 'doppler'],
+    exact: false, boxes: 'hover', anShare: 0, view: 'single', panes: ['blocks', 'bumps', 'heavisine', 'doppler'],
 };
 
 test('defaults give an empty hash and an empty hash gives the defaults', async () => {
@@ -107,4 +107,13 @@ test('the gallery keeps the seed and true f in a link when the single view shows
     assert.match(hash, /showTruth=0/);
     assert.match(hash, /view=gallery.*&data=/);
     assert.deepEqual((await hashToState(hash, DEFAULTS)).state.seed, 9);
+});
+
+test('the shortest interval: 0 is not written, a share round-trips before view and panes, beyond 50% is rejected', async () => {
+    const st = { ...DEFAULTS, anShare: 0.4, view: 'gallery' };
+    const { hash } = await stateToHash(st, DEFAULTS);
+    assert.equal(hash, '#anShare=0.4&view=gallery');
+    assert.deepEqual((await hashToState(hash, DEFAULTS)).state, st);
+    assert.deepEqual((await hashToState('#anShare=0.6', DEFAULTS)).rejected, ['anShare']);
+    assert.deepEqual((await hashToState('#anShare=-0.1', DEFAULTS)).rejected, ['anShare']);
 });

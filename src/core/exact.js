@@ -26,7 +26,7 @@ const DEFAULT_TAU = 3;
  *
  * @param {object} highs  loaded HiGHS instance
  * @param {{x: ArrayLike<number>, y: ArrayLike<number>, shape: Shape, sigma?: number, tau?: number,
- *     lambda?: number, intervals?: {lo: number, hi: number}[], options?: object, cold?: boolean}} spec
+ *     lambda?: number, share?: number, intervals?: {lo: number, hi: number}[], options?: object, cold?: boolean}} spec
  *     cold: clear the solver before every solve (no warm start; for testing)
  * @param {function(number): void} [onProgress]  called with the completed fraction
  * @returns {{status: string, marginal?: boolean, lb: Float64Array|null, ub: Float64Array|null,
@@ -40,7 +40,7 @@ export function exactBounds(highs, spec, onProgress) {
     const n = y.length;
     const sigma = spec.sigma ?? sigmaMAD(y, x);
     const tau = spec.tau ?? DEFAULT_TAU;
-    const intervals = spec.intervals ?? xIntervalFamily(x, spec.lambda ?? 2);
+    const intervals = spec.intervals ?? xIntervalFamily(x, spec.lambda ?? 2, spec.share ?? 0);
     const c = threshold(sigma, tau, n);
     const frame = lpFrame(x, y, sigma);
     const { mean, scale, ys, group, m, tauX } = frame;

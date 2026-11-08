@@ -526,7 +526,29 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         boxes (no residual view). `urlstate.js`: `view` and `panes` last; panes only in the gallery; the seed and
         true f written in the gallery even when the single view shows pasted data. `npm run check:ui` checks the
         gallery and ↗.
-- [ ] Aₙ's shortest interval (§9)
+- [x] Aₙ's shortest interval (§9), 0 (the paper's family) by default
+      → `intervals.js` (from lafspline's merged runs): `intervalSpan`, `shortestSpan`, `blockLevelsWithShortestSpan`,
+        `withShortestSpan`; `xIntervalLevels`, `xIntervalFamily` and `allXIntervals` take a share, and at 0 return
+        what they did. Every builder follows it: `computeBase` (family, levels, taut string, `regionKey`), the
+        worker's calibration (merged runs for the λ family, widened intervals, i.e. all intervals spanning enough,
+        for 'all'), and every LP request (`share` in the spec; `regularize`, `exact`, `shapetest`). `calibKey`
+        includes the share, and the design for pasted data. The fast bands (`bounds.js`, `minSpan` with `x`) skip
+        every window spanning less, per window: they are then honest with respect to all intervals spanning at
+        least the share, and near the ends of x, where no one-sided window spans enough, a monotone bound can be
+        ±∞. Tests: the share-0 family is unchanged; lafspline's interval tests (60 intervals at n = 100 against
+        199); the bands contain any f satisfying Aₙ on the intervals spanning enough; the exact bounds over that
+        family lie inside the fast bounds. Verified in the page: at share 0 the readouts and their tips are
+        identical on five signals (solve times aside); at 5%, HeaviSine n = 1024 has 68 intervals against 2,047 and
+        a calibrated τ of 1.569 against 2.581; the taut string converges in as many rounds or fewer on six
+        signals. Readouts: the intervals note, a visible note on what is not checked, the τ = 3 caveats (small-n
+        warning, fixed-τ note, band coverage "≳ 95–96%"). The residual view draws a widened interval in the lower
+        half of its row. lafspline's `tools/sim-an.mjs` was not copied; the slider's tip cites its rows.
+        The plan's check "the fast bands contain the exact bounds" does not hold even at share 0: the app's exact
+        bounds use the λ family, fewer constraints than the fast bands' windows (HeaviSine, line, exp5 at
+        n = 300: exact outside fast at 279–296 of 300 points). What holds, and is tested, is containment of the
+        exact bounds over all intervals (spanning at least the share).
+        Fixed on the way: readout notes no longer capitalize a leading λ or τ (they read Λ, Τ), and "τ = 3 would
+        cover" says "> 99.95%" instead of "100%" when every calibration sample is covered.
 - [ ] Advanced subsections (§10)
 
 ### M8 — Moved to a separate project: "least ambitious fit" on top of Aₙ

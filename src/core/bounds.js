@@ -13,10 +13,15 @@
 // bounds assume equally spaced x (they use index symmetry and index-linear interpolation); monotone
 // bounds use only the order. With tied x (pass opts.x), monotone windows are runs of whole groups of
 // tied observations, so every window is an x-interval of Aₙ (PLAN.md Known issue 14).
+//
+// Shortest interval (opts.minSpan, x units, with opts.x): a window spanning less (intervals.intervalSpan) is a
+// constraint Aₙ no longer has, so a bound from it would be narrower than honest; such windows are skipped. The
+// test is per window, not per radius: on uneven x the same radius spans enough in some places and not others.
+// The bounds are then honest with respect to Aₙ over all intervals spanning at least minSpan.
 
 import { prefixSums } from './prefix.js';
 import { tieGroups } from './derivatives.js';
-import { tieRanges } from './intervals.js';
+import { tieRanges, intervalSpan } from './intervals.js';
 
 const DEFAULT_THETA = 1.5; // PLAN.md §1.7 default grid ratio
 
@@ -47,6 +52,18 @@ function allRadii(max) {
     return Int32Array.from({ length: Math.max(0, max + 1) }, (_, k) => k);
 }
 
+// A test for windows [lo, hi] (observations) that span less than opts.minSpan, or null when there is no shortest
+// interval.
+function shortTest(opts) {
+    const minSpan = opts.minSpan ?? 0;
+    if (!(minSpan > 0))
+        return null;
+    if (!opts.x)
+        throw new RangeError('a shortest interval (minSpan) needs x');
+    const x = opts.x;
+    return (lo, hi) => intervalSpan(x, { lo, hi }) < minSpan;
+}
+
 function emptyBounds(n) {
     return { lb: new Float64Array(n).fill(-Infinity), ub: new Float64Array(n).fill(Infinity) };
 }
@@ -59,7 +76,7 @@ function emptyBounds(n) {
 //   lb_j = max_k Σ y / N − c/√N,   ub_j = min_k Σ y / N + c/√N   (N = observations in the window),
 // then monotonized (lb running max forward, ub running min backward). sign = −1 applies this to −y
 // for a non-increasing g. Results are written to every observation of each group.
-function monotoneSegment(S, start, c, glo, ghi, radii, sign, lb, ub) {
+function monotoneSegment(S, start, c, glo, ghi, radii, sign, lb, ub, short = null) {
     const len = ghi - glo + 1;
     const rawLb = new Float64Array(len);
     const rawUb = new Float64Array(len);
@@ -68,6 +85,8 @@ function monotoneSegment(S, start, c, glo, ghi, radii, sign, lb, ub) {
         for (const k of radii) {
             if (j - k < glo)
                 break;
+            if (short && short(start[j - k], start[j + 1] - 1))
+                continue;
             const count = start[j + 1] - start[j - k];
             best = Math.max(best, sign * (S[start[j + 1]] - S[start[j - k]]) / count - c / Math.sqrt(count));
         }
@@ -76,6 +95,8 @@ function monotoneSegment(S, start, c, glo, ghi, radii, sign, lb, ub) {
         for (const k of radii) {
             if (j + k > ghi)
                 break;
+            if (short && short(start[j], start[j + k + 1] - 1))
+                continue;
             const count = start[j + k + 1] - start[j];
             best = Math.min(best, sign * (S[start[j + k + 1]] - S[start[j]]) / count + c / Math.sqrt(count));
         }
@@ -107,9 +128,9 @@ function groupsOf(n, x) {
  *
  * @param {ArrayLike<number>} y  observations ordered by x
  * @param {number} c             threshold σ√(τ log n), units of y
- * @param {{direction?: 1|-1, theta?: number, full?: boolean, x?: ArrayLike<number>}} [opts]
+ * @param {{direction?: 1|-1, theta?: number, full?: boolean, x?: ArrayLike<number>, minSpan?: number}} [opts]
  *     direction +1 non-decreasing (default), −1 non-increasing; full = every radius (O(n²) reference);
- *     x = sorted x, so windows never split tied observations
+ *     x = sorted x, so windows never split tied observations; minSpan = shortest window span, x units
  * @returns {{lb: Float64Array, ub: Float64Array}}
  */
 export function monotoneBounds(y, c, opts = {}) {
@@ -118,7 +139,7 @@ export function monotoneBounds(y, c, opts = {}) {
     const { start, m } = groupsOf(n, opts.x);
     const radii = opts.full ? allRadii(m - 1) : windowRadii(opts.theta ?? DEFAULT_THETA, m - 1, 1);
     const out = emptyBounds(n);
-    monotoneSegment(S, start, c, 0, m - 1, radii, opts.direction ?? 1, out.lb, out.ub);
+    monotoneSegment(S, start, c, 0, m - 1, radii, opts.direction ?? 1, out.lb, out.ub, shortTest(opts));
     return out;
 }
 
@@ -131,9 +152,9 @@ export function monotoneBounds(y, c, opts = {}) {
  * @param {ArrayLike<number>} y
  * @param {number} c
  * @param {Array<{type: 'max'|'min', position: number}>} extremes  ordered by position (0-based index)
- * @param {{theta?: number, full?: boolean, direction?: 1|-1|0, x?: ArrayLike<number>}} [opts]
+ * @param {{theta?: number, full?: boolean, direction?: 1|-1|0, x?: ArrayLike<number>, minSpan?: number}} [opts]
  *     direction is used only when there are no extremes: ±1 monotone that way, 0 (default) either way
- *     (union of both bands)
+ *     (union of both bands); minSpan as in monotoneBounds
  * @returns {{lb: Float64Array, ub: Float64Array, segments: Array<{lo: number, hi: number, direction: 1|-1}>}}
  *     segments in observation indices: lo = first observation of the start group, hi = first
  *     observation of the end group (src/core/exact.js constrains the steps lo..hi−1)
@@ -143,17 +164,18 @@ export function piecewiseMonotoneBounds(y, c, extremes, opts = {}) {
     const S = prefixSums(y);
     const { start, m } = groupsOf(n, opts.x);
     const radii = opts.full ? allRadii(m - 1) : windowRadii(opts.theta ?? DEFAULT_THETA, m - 1, 1);
+    const short = shortTest(opts);
     if (extremes.length === 0) {
         const dir = opts.direction ?? 0;
         if (dir !== 0) {
             const out = emptyBounds(n);
-            monotoneSegment(S, start, c, 0, m - 1, radii, dir, out.lb, out.ub);
+            monotoneSegment(S, start, c, 0, m - 1, radii, dir, out.lb, out.ub, short);
             return { ...out, segments: [{ lo: 0, hi: n - 1, direction: dir }] };
         }
         const up = emptyBounds(n);
         const down = emptyBounds(n);
-        monotoneSegment(S, start, c, 0, m - 1, radii, 1, up.lb, up.ub);
-        monotoneSegment(S, start, c, 0, m - 1, radii, -1, down.lb, down.ub);
+        monotoneSegment(S, start, c, 0, m - 1, radii, 1, up.lb, up.ub, short);
+        monotoneSegment(S, start, c, 0, m - 1, radii, -1, down.lb, down.ub, short);
         const lb = Float64Array.from(up.lb, (v, i) => Math.min(v, down.lb[i]));
         const ub = Float64Array.from(up.ub, (v, i) => Math.max(v, down.ub[i]));
         return { lb, ub, segments: [] };
@@ -178,7 +200,7 @@ export function piecewiseMonotoneBounds(y, c, extremes, opts = {}) {
     }
     const out = emptyBounds(n);
     for (const seg of groupSegments)
-        monotoneSegment(S, start, c, seg.glo, seg.ghi, radii, seg.direction, out.lb, out.ub);
+        monotoneSegment(S, start, c, seg.glo, seg.ghi, radii, seg.direction, out.lb, out.ub, short);
     return { ...out, segments };
 }
 
@@ -189,7 +211,7 @@ export function piecewiseMonotoneBounds(y, c, extremes, opts = {}) {
 // Lower (PLAN.md §1.7, replacing eq. 67): with an anchor at i+k (k ≥ 2) and 1 ≤ j < k, convexity gives
 // g_{i+l} ≤ (1 − l/k)gᵢ + (l/k)ub_{i+k} for l = 1..j, and Aₙ on {i+1..i+j} gives Σ g_{i+l} ≥ Σ y_{i+l} − c√j,
 // so gᵢ ≥ [mean(y_{i+1..i+j}) − c/√j − ub_{i+k}(j+1)/(2k)] / (1 − (j+1)/(2k)); mirrored on the left.
-function convexSegment(S, c, lo, hi, kRadii, jRadii, sign, lb, ub) {
+function convexSegment(S, c, lo, hi, kRadii, jRadii, sign, lb, ub, short = null) {
     const len = hi - lo + 1;
     const u = new Float64Array(len).fill(Infinity);
     for (let i = lo; i <= hi; i++) {
@@ -198,6 +220,8 @@ function convexSegment(S, c, lo, hi, kRadii, jRadii, sign, lb, ub) {
         for (const k of kRadii) {
             if (k > reach)
                 break;
+            if (short && short(i - k, i + k))
+                continue;
             best = Math.min(best, sign * (S[i + k + 1] - S[i - k]) / (2 * k + 1) + c / Math.sqrt(2 * k + 1));
         }
         u[i - lo] = best;
@@ -219,11 +243,11 @@ function convexSegment(S, c, lo, hi, kRadii, jRadii, sign, lb, ub) {
                     break;
                 const w = (j + 1) / (2 * k);
                 const slack = c / Math.sqrt(j);
-                if (right) {
+                if (right && !(short && short(i + 1, i + j))) {
                     const m = sign * (S[i + j + 1] - S[i + 1]) / j;
                     best = Math.max(best, (m - slack - u[i + k - lo] * w) / (1 - w));
                 }
-                if (left) {
+                if (left && !(short && short(i - j, i - 1))) {
                     const m = sign * (S[i] - S[i - j]) / j;
                     best = Math.max(best, (m - slack - u[i - k - lo] * w) / (1 - w));
                 }
@@ -251,8 +275,9 @@ function convexRadii(opts, n) {
  *
  * @param {ArrayLike<number>} y
  * @param {number} c
- * @param {{concave?: boolean, theta?: number, full?: boolean}} [opts]  full = every radius
- *     (O(n²) upper, O(n³) lower; small n only)
+ * @param {{concave?: boolean, theta?: number, full?: boolean, x?: ArrayLike<number>, minSpan?: number}} [opts]
+ *     full = every radius (O(n²) upper, O(n³) lower; small n only); minSpan (x units, with x) skips shorter
+ *     windows
  * @returns {{lb: Float64Array, ub: Float64Array}}
  */
 export function convexBounds(y, c, opts = {}) {
@@ -260,7 +285,7 @@ export function convexBounds(y, c, opts = {}) {
     const S = prefixSums(y);
     const { kRadii, jRadii } = convexRadii(opts, n);
     const out = emptyBounds(n);
-    convexSegment(S, c, 0, n - 1, kRadii, jRadii, opts.concave ? -1 : 1, out.lb, out.ub);
+    convexSegment(S, c, 0, n - 1, kRadii, jRadii, opts.concave ? -1 : 1, out.lb, out.ub, shortTest(opts));
     return out;
 }
 
@@ -272,7 +297,8 @@ export function convexBounds(y, c, opts = {}) {
  * @param {ArrayLike<number>} y
  * @param {number} c
  * @param {Array<{lo: number, hi: number, type: 'convex'|'concave'|'linear'}>} segments
- * @param {{theta?: number, full?: boolean}} [opts]
+ * @param {{theta?: number, full?: boolean, x?: ArrayLike<number>, minSpan?: number}} [opts]  minSpan as in
+ *     convexBounds
  * @returns {{lb: Float64Array, ub: Float64Array}}
  */
 export function piecewiseConvexBounds(y, c, segments, opts = {}) {
@@ -280,11 +306,12 @@ export function piecewiseConvexBounds(y, c, segments, opts = {}) {
     const S = prefixSums(y);
     const { kRadii, jRadii } = convexRadii(opts, n);
     const out = emptyBounds(n);
+    const short = shortTest(opts);
     for (const seg of segments) {
         if (seg.type !== 'concave')
-            convexSegment(S, c, seg.lo, seg.hi, kRadii, jRadii, 1, out.lb, out.ub);
+            convexSegment(S, c, seg.lo, seg.hi, kRadii, jRadii, 1, out.lb, out.ub, short);
         if (seg.type !== 'convex')
-            convexSegment(S, c, seg.lo, seg.hi, kRadii, jRadii, -1, out.lb, out.ub);
+            convexSegment(S, c, seg.lo, seg.hi, kRadii, jRadii, -1, out.lb, out.ub, short);
     }
     return out;
 }
@@ -356,13 +383,15 @@ function smoothRadii(opts, n) {
  * @param {number} c
  * @param {number} K   bound on |g″| in x units
  * @param {number} h   spacing of x (x units)
- * @param {{theta?: number, full?: boolean}} [opts]
+ * @param {{theta?: number, full?: boolean, x?: ArrayLike<number>, minSpan?: number}} [opts]  minSpan (x units,
+ *     with x) skips shorter windows
  * @returns {{lb: Float64Array, ub: Float64Array}}
  */
 export function smoothnessBounds(y, c, K, h, opts = {}) {
     const n = y.length;
     const S = prefixSums(y);
     const radii = smoothRadii(opts, n);
+    const short = shortTest(opts);
     const out = emptyBounds(n);
     for (let i = 0; i < n; i++) {
         const reach = Math.min(i, n - 1 - i);
@@ -371,6 +400,8 @@ export function smoothnessBounds(y, c, K, h, opts = {}) {
         for (const k of radii) {
             if (k > reach)
                 break;
+            if (short && short(i - k, i + k))
+                continue;
             const mean = (S[i + k + 1] - S[i - k]) / (2 * k + 1);
             const slack = c / Math.sqrt(2 * k + 1) + K * h * h * k * (k + 1) / 6;
             lo = Math.max(lo, mean - slack);
@@ -392,13 +423,15 @@ export function smoothnessBounds(y, c, K, h, opts = {}) {
  * @param {ArrayLike<number>} y
  * @param {number} c
  * @param {number} h   spacing of x
- * @param {{theta?: number, full?: boolean}} [opts]
+ * @param {{theta?: number, full?: boolean, x?: ArrayLike<number>, minSpan?: number}} [opts]  minSpan as in
+ *     smoothnessBounds
  * @returns {number}  K_min in x units
  */
 export function smoothnessKMin(y, c, h, opts = {}) {
     const n = y.length;
     const S = prefixSums(y);
     const radii = smoothRadii(opts, n);
+    const short = shortTest(opts);
     let kMin = 0;
     const means = new Float64Array(radii.length);
     const slacks = new Float64Array(radii.length);
@@ -409,6 +442,8 @@ export function smoothnessKMin(y, c, h, opts = {}) {
         for (const k of radii) {
             if (k > reach)
                 break;
+            if (short && short(i - k, i + k))
+                continue;
             means[count] = (S[i + k + 1] - S[i - k]) / (2 * k + 1);
             slacks[count] = c / Math.sqrt(2 * k + 1);
             curv[count] = h * h * k * (k + 1) / 6;

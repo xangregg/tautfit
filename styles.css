@@ -912,3 +912,21 @@ body.gallery main {
     border-color: var(--series-1);
     position: relative;
 }
+
+/* a slider with its value beside it (Aₙ's shortest interval) */
+.slider {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.slider input[type='range'] {
+    flex: 1;
+    min-width: 0;
+}
+
+.slider output {
+    min-width: 3.2em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}

@@ -1,6 +1,9 @@
 // Residual view: one row per resolution level k of the multiresolution scheme, one cell per interval,
 // colored by |w(I)|/c. Cells with ratio > 1 are the constraints of Aₙ that the fit violates. Rows are
-// full partitions (multiresolutionLevels), so an interval shared by two levels appears in both rows.
+// full partitions (multiresolutionLevels), so an interval shared by two levels appears in both rows. With a
+// shortest interval, a run of short blocks too short even when merged is widened over its neighbors
+// (intervals.js, flagged `widened`) and overlaps them: such an interval is drawn in the lower half of its row, over
+// its whole span, so it never hides the cells it overlaps.
 
 import * as d3 from 'd3';
 import { MARGIN, xScale, cellIndex, sizeCanvas } from './layout.js';
@@ -61,6 +64,12 @@ export function createResidualView(container, { onHover }) {
         return MARGIN.top + k * ROW_H;
     }
 
+    // A cell's top and height: the whole row, or its lower half for a widened interval.
+    function cellRows(k, iv) {
+        const full = ROW_H - ROW_GAP;
+        return iv.widened ? [rowTop(k) + full / 2, full / 2] : [rowTop(k), full];
+    }
+
     function render(m) {
         model = m;
         hover.attr('visibility', 'hidden');
@@ -90,17 +99,21 @@ export function createResidualView(container, { onHover }) {
 
         const ctx = sizeCanvas(canvas, width, height);
         ctx.clearRect(0, 0, width, height);
-        // First pass: every cell in its ratio color. Second pass: violations, at least 1 px wide, so a
-        // violating interval narrower than a pixel is never blended away.
-        for (let k = 0; k < rows; k++) {
-            const level = m.levels[k];
-            const ratios = m.ratios[k];
-            const y0 = rowTop(k);
-            for (let j = 0; j < level.length; j++) {
-                const x0 = sx(m.edges[level[j].lo]);
-                const x1 = sx(m.edges[level[j].hi + 1]);
-                ctx.fillStyle = ratios[j] > limit ? colors.violation : color(ratios[j]);
-                ctx.fillRect(x0, y0, x1 - x0, ROW_H - ROW_GAP);
+        // First pass: every cell in its ratio color (widened ones after the rest, in the lower half). Second pass:
+        // violations, at least 1 px wide, so a violating interval narrower than a pixel is never blended away.
+        for (const widened of [false, true]) {
+            for (let k = 0; k < rows; k++) {
+                const level = m.levels[k];
+                const ratios = m.ratios[k];
+                for (let j = 0; j < level.length; j++) {
+                    if (Boolean(level[j].widened) !== widened)
+                        continue;
+                    const x0 = sx(m.edges[level[j].lo]);
+                    const x1 = sx(m.edges[level[j].hi + 1]);
+                    const [y0, h] = cellRows(k, level[j]);
+                    ctx.fillStyle = ratios[j] > limit ? colors.violation : color(ratios[j]);
+                    ctx.fillRect(x0, y0, x1 - x0, h);
+                }
             }
         }
         ctx.fillStyle = colors.violation;
@@ -112,7 +125,8 @@ export function createResidualView(container, { onHover }) {
                     continue;
                 const x0 = sx(m.edges[level[j].lo]);
                 const x1 = sx(m.edges[level[j].hi + 1]);
-                ctx.fillRect(x0, rowTop(k), Math.max(1, x1 - x0), ROW_H - ROW_GAP);
+                const [y0, h] = cellRows(k, level[j]);
+                ctx.fillRect(x0, y0, Math.max(1, x1 - x0), h);
             }
         }
 
@@ -139,8 +153,13 @@ export function createResidualView(container, { onHover }) {
             return null;
         const i = cellIndex(model.edges, sx.invert(px));
         const level = model.levels[k];
-        const j = byLo.right(level, i) - 1;
-        return { k, j };
+        if (!level.some(iv => iv.widened))
+            return { k, j: byLo.right(level, i) - 1 };
+        // overlapping intervals: the widened one in the lower half of the row, the others above
+        const lower = py - rowTop(k) >= (ROW_H - ROW_GAP) / 2;
+        const covering = level.map((iv, j) => ({ iv, j })).filter(({ iv }) => iv.lo <= i && i <= iv.hi);
+        const pick = covering.find(({ iv }) => Boolean(iv.widened) === lower) ?? covering[0];
+        return pick ? { k, j: pick.j } : null;
     }
 
     overlay.on('pointermove', event => {
@@ -155,15 +174,17 @@ export function createResidualView(container, { onHover }) {
         const w = model.w[k][j];
         const x0 = sx(model.edges[iv.lo]);
         const x1 = sx(model.edges[iv.hi + 1]);
+        const [y0, h] = cellRows(k, iv);
         hover.attr('visibility', 'visible')
             .attr('x', x0 - 0.5).attr('width', Math.max(1, x1 - x0) + 1)
-            .attr('y', rowTop(k) - 0.5).attr('height', ROW_H - ROW_GAP + 1);
+            .attr('y', y0 - 0.5).attr('height', h + 1);
         const len = iv.hi - iv.lo + 1;
         const where = len === 1
             ? `x = ${fmt(model.x[iv.lo])}`
             : `x ∈ [${fmt(model.x[iv.lo])}, ${fmt(model.x[iv.hi])}]`;
         const sign = w > 0 ? 'data above fit on average' : w < 0 ? 'data below fit on average' : '';
-        showTooltip(event.pageX, event.pageY, `${where}  (#${iv.lo + 1}–${iv.hi + 1}, |I| = ${len})`, [
+        const widened = iv.widened ? ' · widened to the shortest interval' : '';
+        showTooltip(event.pageX, event.pageY, `${where}  (#${iv.lo + 1}–${iv.hi + 1}, |I| = ${len})${widened}`, [
             [fmtRatio(ratio), '|w(I)| / c'],
             [fmt(w), `w(I)${sign ? ` · ${sign}` : ''}`],
         ], ratio > (model.limit ?? 1) ? 'Violation: this constraint of Aₙ fails'

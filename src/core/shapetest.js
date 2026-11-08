@@ -22,7 +22,7 @@ import { sigmaMAD } from './sigma.js';
  *
  * @param {object} highs  loaded HiGHS instance
  * @param {{x: ArrayLike<number>, y: ArrayLike<number>, shape: import('./lp-build.js').Shape,
- *     sigma?: number, lambda?: number, intervals?: {lo: number, hi: number}[], options?: object}} spec
+ *     sigma?: number, lambda?: number, share?: number, intervals?: {lo: number, hi: number}[], options?: object}} spec
  * @returns {ShapeThreshold}
  */
 export function shapeThreshold(highs, spec) {
@@ -30,7 +30,7 @@ export function shapeThreshold(highs, spec) {
     const y = Float64Array.from(spec.y);
     const n = y.length;
     const sigma = spec.sigma ?? sigmaMAD(y, x);
-    const intervals = spec.intervals ?? xIntervalFamily(x, spec.lambda ?? 2);
+    const intervals = spec.intervals ?? xIntervalFamily(x, spec.lambda ?? 2, spec.share ?? 0);
     const frame = lpFrame(x, y, sigma);
     const rows = shapeConstraints(spec.shape, frame);
     const { model, cCol } = buildMinThreshold({ ys: frame.ys, group: frame.group, tau: frame.tauX, intervals, ...rows });

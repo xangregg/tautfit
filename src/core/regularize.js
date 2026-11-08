@@ -20,6 +20,7 @@ const REGION_TOL = 1e-6; // relative slack when re-checking LP solutions against
  * @property {number} [sigma]          noise scale (default σ̂)
  * @property {number} [tau=3]
  * @property {number} [lambda=2]       multiresolution scale (ignored if intervals given)
+ * @property {number} [share=0]        Aₙ's shortest interval, share of the x range (ignored if intervals given)
  * @property {{lo: number, hi: number}[]} [intervals]
  * @property {Int8Array} [signs]       combined: step signs over observations (extremes.stepSigns of
  *                                     the taut string, length n − 1)
@@ -67,7 +68,7 @@ export function regularize(highs, spec) {
     const k = method === 'combined' ? 2 : spec.k;
     const sigma = spec.sigma ?? sigmaMAD(y, x);
     const tau = spec.tau ?? DEFAULT_TAU;
-    const intervals = spec.intervals ?? xIntervalFamily(x, spec.lambda ?? 2);
+    const intervals = spec.intervals ?? xIntervalFamily(x, spec.lambda ?? 2, spec.share ?? 0);
     const c = threshold(sigma, tau, n);
 
     const frame = lpFrame(x, y, sigma);

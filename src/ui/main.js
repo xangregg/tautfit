@@ -9,7 +9,7 @@ import * as d3 from 'd3';
 import { SIGNALS, simulate } from '../core/signals.js';
 import { parseTable, prepareXY, rowIndex } from '../core/data.js';
 import { sigmaMAD, sigmaGSJS, replicateInfo } from '../core/sigma.js';
-import { multiresolutionLevels, xIntervalFamily, xIntervalLevels, tieRanges } from '../core/intervals.js';
+import { multiresolutionLevels, xIntervalFamily, xIntervalLevels, tieRanges, shortestSpan } from '../core/intervals.js';
 import { threshold, checkRegion, constraintBoxes } from '../core/region.js';
 import { tautStringRegression } from '../core/tautstring.js';
 import { localExtremes, stepSigns } from '../core/extremes.js';
@@ -69,6 +69,7 @@ const state = {
     yCol: null, // column index, null = auto (second column if there are ≥ 2, else the only one)
     tau: 3,
     lambda: 2,
+    anShare: 0, // Aₙ's shortest interval, a share of the x range: 0 = every interval (the paper's family)
     sigmaFixed: null, // number to override σ̂
     sigmaMethod: 'diff', // σ̂ estimator: 'diff' (eq. 10) | 'gsjs' (trend-robust local linear residuals)
     method: 'taut', // key of METHODS
@@ -189,21 +190,29 @@ function deriveBase(st, data, tauInfo) {
     const sigmaUsed = st.sigmaFixed ?? (useRobust ? sigmaRobust : sigmaHat);
     const warnings = sigmaWarnings(st, n, sigmaHat, sigmaRobust, useRobust, replicates);
     const c = threshold(sigmaUsed, tau, n);
-    // Intervals of x (eq. 6): built on the distinct x values, so tied observations are never separated.
-    const family = xIntervalFamily(x, st.lambda);
-    const levels = xIntervalLevels(x, st.lambda);
+    // Intervals of x (eq. 6): built on the distinct x values, so tied observations are never separated. With a
+    // shortest interval, the paper's short blocks are merged or widened (intervals.js), in every level.
+    const share = st.anShare;
+    const levels = xIntervalLevels(x, st.lambda, share);
+    const family = xIntervalFamily(x, st.lambda, share);
     const groups = tieRanges(x);
-    const levelSizes = multiresolutionLevels(groups.m, st.lambda).map(level => level[0].hi - level[0].lo + 1);
+    const levelSizes = levelSizeLabels(x, levels, st.lambda, share);
     const taut = tautStringRegression(y, { x, sigma: sigmaUsed, tau, intervals: family });
     const tautExt = localExtremes(taut.f);
-    const regionKey = `${dataKey}|${sigmaUsed}|${tau}|${st.lambda}`;
+    const regionKey = `${dataKey}|${sigmaUsed}|${tau}|${st.lambda}|${share}`;
     const h = (x[n - 1] - x[0]) / (n - 1); // spacing, meaningful when equallySpaced
+    // The fast bands skip windows spanning less than the shortest interval: Aₙ no longer constrains them.
+    const minSpan = shortestSpan(x, share);
     // Bands are meant for τ = 3-style thresholds; they use c with σ (σ̂ unless fixed), like Aₙ.
     // K_min costs O(n·|grid|²); only the smoothness band needs it.
-    const kMin = equallySpaced && st.band === 'smooth' ? smoothnessKMin(y, c, h, { theta: st.theta }) : null;
+    const kMin = equallySpaced && st.band === 'smooth' ? smoothnessKMin(y, c, h, { theta: st.theta, x, minSpan }) : null;
+    const allNotes = share > 0
+        ? [`Every interval spans at least ${pct(share)} of the x range (shorter blocks are merged or widened), so `
+            + 'narrower features are neither required nor ruled out.', ...notes]
+        : notes;
     return {
-        columns, notes, warnings, x, y, f, n, dataKey, ties: groups.ties, levelSizes, replicates, sigmaHat, sigmaRobust, useRobust, sigmaUsed, tau, tauInfo, c, family, levels, taut, tautExt, regionKey,
-        equallySpaced, h, kMin, edges: cellEdges(x),
+        columns, notes: allNotes, warnings, x, y, f, n, dataKey, ties: groups.ties, levelSizes, replicates, sigmaHat, sigmaRobust, useRobust, sigmaUsed, tau, tauInfo, c, family, levels, taut, tautExt, regionKey,
+        equallySpaced, h, kMin, minSpan, edges: cellEdges(x),
     };
 }
 
@@ -217,8 +226,12 @@ function sigmaWarnings(st, n, sigmaHat, sigmaRobust, useRobust, replicates) {
             : replicates.pureErrorOnly ? `σ̂ comes from only ${replicates.df} replicate degrees of freedom`
                 : useRobust ? `GSJS σ̂ comes from only ${n - 2} pseudo-residuals`
                     : `σ̂ comes from only ${n - 1} differences`;
-        out.push(`Small n (${n}): ${source}, and τ = 3 targets n ≥ 500; at small n it can cover far less than 95% `
-            + '(e.g. 76% at n = 10 with GSJS σ̂). Calibrate τ for this n, and fix σ if you know the noise level.');
+        // τ = 3's coverage was measured for every interval; fewer intervals cover more, by an unknown amount
+        const tau3 = st.anShare > 0
+            ? `and the coverage of τ = 3 is not known for intervals ${shortestText(st)} (higher than for every `
+                + 'interval, since fewer intervals give the noise fewer chances to exceed c)'
+            : 'and τ = 3 targets n ≥ 500; at small n it can cover far less than 95% (e.g. 76% at n = 10 with GSJS σ̂)';
+        out.push(`Small n (${n}): ${source}, ${tau3}. Calibrate τ for this n, and fix σ if you know the noise level.`);
     }
     if (st.sigmaFixed === null && !useRobust && Number.isFinite(sigmaRobust) && sigmaRobust > 0) {
         const ratio = sigmaHat / sigmaRobust;
@@ -261,19 +274,19 @@ function computeBand(base, st, getFit) {
     let shape = null; // the same assumption for exact LP bounds (src/core/exact.js), when expressible
     if (st.band === 'monoUp' || st.band === 'monoDown') {
         const direction = st.band === 'monoUp' ? 1 : -1;
-        b = monotoneBounds(y, c, { direction, theta, x: base.x });
+        b = monotoneBounds(y, c, { direction, theta, x: base.x, minSpan: base.minSpan });
         shape = { type: 'monotone', direction };
     }
     else if (st.band === 'pwMono') {
         const extremes = base.tautExt.extremes.map(e => ({ type: e.type, position: Math.floor((e.start + e.end) / 2) }));
-        b = piecewiseMonotoneBounds(y, c, extremes, { theta, x: base.x });
+        b = piecewiseMonotoneBounds(y, c, extremes, { theta, x: base.x, minSpan: base.minSpan });
         extra = extremes.length ? `${extremes.length} extreme position(s) from the taut string`
             : 'taut string has no extremes: monotone in either direction';
         // "monotone either way" is a union of two regions, not one LP
         shape = b.segments.length ? { type: 'pwMonotone', segments: b.segments } : null;
     }
     else if (st.band === 'convex' || st.band === 'concave') {
-        b = convexBounds(y, c, { concave: st.band === 'concave', theta });
+        b = convexBounds(y, c, { concave: st.band === 'concave', theta, x: base.x, minSpan: base.minSpan });
         shape = { type: 'convex', concave: st.band === 'concave' };
     }
     else if (st.band === 'pwConvex') {
@@ -283,13 +296,13 @@ function computeBand(base, st, getFit) {
         if (fit.error)
             return null;
         const segments = curvatureSegments(base.x, fit.g);
-        b = piecewiseConvexBounds(y, c, segments, { theta });
+        b = piecewiseConvexBounds(y, c, segments, { theta, x: base.x, minSpan: base.minSpan });
         extra = segments.map(sg => sg.type).join(' → ');
         shape = { type: 'pwConvex', segments };
     }
     else {
         const K = st.kMultiple * base.kMin;
-        b = smoothnessBounds(y, c, K, base.h, { theta });
+        b = smoothnessBounds(y, c, K, base.h, { theta, x: base.x, minSpan: base.minSpan });
         extra = `K = ${fmt(K)} (${st.kMultiple}× K_min)`;
         shape = { type: 'smooth', K };
     }
@@ -302,14 +315,21 @@ function computeBand(base, st, getFit) {
 // (PLAN.md Known issues 6, 13). Measured at n = 500, 1000 runs (exp(5t) monotone/convex, sin(4πt)
 // smoothness): τ = 3 → 95.4–96.1%; τ calibrated for the dyadic family (2.72) → 91.6–93.1%; τ calibrated
 // for all intervals (3.08) → 96.2–96.5%.
+// With a shortest interval the fast bands skip shorter windows, so their honesty is with respect to all intervals
+// spanning at least the share, a smaller family than all intervals: τ = 3 can only cover more.
 function bandCoverageNote(base, st) {
+    const spanning = st.anShare > 0 ? ` ${shortestText(st)}` : '';
     if (base.tauInfo.mode === 'calibrated' && st.calibFamily === 'all') {
         return { value: `≥ ${st.alpha} (calibrated)`,
-            note: 'τ calibrated for all intervals, which covers every window the fast bands use' };
+            note: `τ calibrated for all intervals${spanning}, which covers every window the fast bands use` };
     }
     if (base.tauInfo.mode === 'calibrated') {
         return { value: 'below α', note: 'τ was calibrated for the λ family, but the fast bands use other windows: '
             + 'measured 92–93% at α = 0.95, n = 500. Calibrate for all intervals for honest bands.' };
+    }
+    if (base.tau === 3 && st.anShare > 0) {
+        return { value: '≳ 95–96%', note: 'τ = 3; measured 95.4–96.1% at n = 500 over all intervals, and requiring '
+            + `only the intervals${spanning} can only cover more` };
     }
     if (base.tau === 3) {
         return { value: '≈ 95–96%', note: 'τ = 3; measured 95.4–96.1% at n = 500 (paper eq. 11 holds only marginally over all intervals)' };
@@ -350,7 +370,7 @@ function bandRows(base, band, st, exact) {
                 narrower++;
         }
         add('exact LP bounds', `${fmtInt(exact.solves)} LPs, ${fmt(exact.ms / 1000)} s`,
-            `Aₙ with the λ family; mean width ${fmt(wExact)} vs fast ${fmt(wFast)}; narrower at ${narrower} of ${base.n} points`,
+            `Aₙ with the λ family${st.anShare > 0 ? ` ${shortestText(st)}` : ''}; mean width ${fmt(wExact)} vs fast ${fmt(wFast)}; narrower at ${narrower} of ${base.n} points`,
             EXACT_TIP);
         if (base.f) {
             const inside = base.f.every((v, i) => exact.lb[i] - 1e-9 <= v && v <= exact.ub[i] + 1e-9);
@@ -370,14 +390,21 @@ function bandRows(base, band, st, exact) {
 
 function tauRow(base, st) {
     const t = base.tauInfo;
+    const tauTip = 'Aₙ\'s threshold parameter, in c = σ√(τ log n).';
+    if (t.mode === 'fixed' && st.anShare > 0) {
+        return { label: 'τ', value: fmt(t.tau), tip: tauTip, note: 'the coverage of a fixed τ (eq. 11 for τ = 3) '
+            + `is for every interval; for the intervals ${shortestText(st)} it is not known but higher, since fewer `
+            + 'intervals give the noise fewer chances to exceed c. Calibrate τ to know it' };
+    }
     if (t.mode === 'fixed')
-        return { label: 'τ', value: fmt(t.tau), tip: 'Aₙ\'s threshold parameter, in c = σ√(τ log n).' };
-    const family = st.calibFamily === 'all' ? 'all intervals' : `λ = ${fmt(st.lambda)} family`;
+        return { label: 'τ', value: fmt(t.tau), tip: tauTip };
+    const family = (st.calibFamily === 'all' ? 'all intervals' : `λ = ${fmt(st.lambda)} family`)
+        + (st.anShare > 0 ? ` ${shortestText(st)}` : '');
     const plug = st.sigmaFixed !== null || !st.plugSigma ? ' with σ known'
         : st.sigmaMethod === 'gsjs' ? ' with GSJS σ̂' : ' with σ̂ (eq. 10)';
     return { label: 'τ (calibrated)', value: fmt(t.tau),
         note: `Monte Carlo τₙ(${st.alpha}) for ${family}${plug}, B = ${CALIBRATION_B}; `
-            + `95% MC interval ${fmt(t.tauLo)}–${fmt(t.tauHi)}; τ = 3 would cover ${fmt(100 * t.cov3)}%`,
+            + `95% MC interval ${fmt(t.tauLo)}–${fmt(t.tauHi)}; τ = 3 would cover ${coverageText(t.cov3)}`,
         tip: 'Aₙ\'s threshold parameter, in c = σ√(τ log n), chosen by Monte Carlo on pure noise so that Aₙ '
             + 'contains f with probability α.' };
 }
@@ -410,7 +437,9 @@ function readoutRows(base, fit, st, shape) {
     rows.push(tauRow(base, st));
     add('threshold c', fmt(base.c), undefined, 'Aₙ\'s threshold, c = σ√(τ log n): a function is in Aₙ when '
         + '|w(I)| ≤ c on every interval I of the family (eq. 7).');
-    add('intervals', fmtInt(base.family.length), `λ = ${fmt(st.lambda)}, singletons included`,
+    add('intervals', fmtInt(base.family.length),
+        st.anShare > 0 ? `λ = ${fmt(st.lambda)}, only intervals ${shortestText(st)}`
+            : `λ = ${fmt(st.lambda)}, singletons included`,
         'The size of the interval family 𝓘ₙ that Aₙ checks (eq. 9): consecutive blocks of about λᵏ observations at '
         + 'each level k.');
     add('fit', fitName(fit), undefined, 'The fit drawn, with its shape constraint if any.');
@@ -441,6 +470,35 @@ function readoutRows(base, fit, st, shape) {
     add('violated intervals', `${fmtInt(fit.check.violations)} of ${fmtInt(base.family.length)}`, undefined,
         'Intervals where |w(I)| > c, which the residual view marks. The fit is in Aₙ when there are none.');
     return rows;
+}
+
+/** A share of the x range as a percentage, '5%'. */
+function pct(share) {
+    return `${+(100 * share).toPrecision(3)}%`;
+}
+
+/** What the shortest interval says, for notes: '' at share 0. */
+function shortestText(st) {
+    return st.anShare > 0 ? `spanning at least ${pct(st.anShare)} of the x range` : '';
+}
+
+/**
+ * Labels for the levels: the size of their intervals (distinct x with ties), or the range of sizes when a shortest
+ * interval merged or widened some of them.
+ */
+function levelSizeLabels(x, levels, lambda, share) {
+    const groups = tieRanges(x);
+    if (!(share > 0))
+        return multiresolutionLevels(groups.m, lambda).map(level => String(level[0].hi - level[0].lo + 1));
+    const groupOf = new Int32Array(x.length);
+    for (let j = 0; j < groups.m; j++)
+        groupOf.fill(j, groups.start[j], groups.start[j + 1]);
+    return levels.map(level => {
+        const sizes = level.map(iv => groupOf[iv.hi] - groupOf[iv.lo] + 1);
+        const lo = d3.min(sizes);
+        const hi = d3.max(sizes);
+        return lo === hi ? String(lo) : `${lo}–${hi}`;
+    });
 }
 
 /** Display name of a fit, with its shape constraint. */
@@ -526,8 +584,10 @@ function verdictText(base, fit) {
     return `: the smallest ${fit.lp.objectiveLabel} of any function in Aₙ is ${fmt(fit.lp.objective)}; ${extremes}.`;
 }
 
+// A note as a sentence: a leading Latin letter capitalized (a symbol such as λ or τ keeps its case, or it would
+// read as another symbol), and a period added.
 function sentence(text) {
-    const t = text.charAt(0).toUpperCase() + text.slice(1);
+    const t = /^[a-z]/.test(text) ? text.charAt(0).toUpperCase() + text.slice(1) : text;
     return /[.!?]$/.test(t) ? t : `${t}.`;
 }
 
@@ -619,7 +679,8 @@ async function startup() {
         if (cached)
             return cached.error || cached.infeasible ? cached : analyze(cached, b);
         if (!fitJobs.has(key)) {
-            const req = { x: b.x, y: b.y, sigma: b.sigmaUsed, tau: b.tau, lambda: st.lambda, ...spec.lp };
+            const req = { x: b.x, y: b.y, sigma: b.sigmaUsed, tau: b.tau, lambda: st.lambda, share: st.anShare,
+                ...spec.lp };
             if (shapeKey !== 'none')
                 req.shape = FIT_SHAPES[shapeKey].shape;
             if (methodKey === 'combined') {
@@ -676,9 +737,11 @@ async function startup() {
     function calibKey(data, family, st) {
         const fam = family === 'all' ? 'all' : `λ${st.lambda}`;
         const est = calibEstimator(st);
-        // GSJS and tied x (the family is over the distinct x) make the calibration specific to the data's x
-        const design = est === 'gsjs' || data.ties ? `|${data.dataKey}` : '';
-        return `${data.n}|${fam}|${est}${design}|${CALIBRATION_B}|${CALIBRATION_SEED}`;
+        // GSJS, tied x (the family is over the distinct x) and a shortest interval (spans are in x) make the
+        // calibration specific to the data's x; a simulated signal's x = i/n is fixed by n, already in the key
+        const pasted = data.dataKey.startsWith('user|');
+        const design = est === 'gsjs' || data.ties || (st.anShare > 0 && pasted) ? `|${data.dataKey}` : '';
+        return `${data.n}|${fam}|${st.anShare}|${est}${design}|${CALIBRATION_B}|${CALIBRATION_SEED}`;
     }
 
     // τ for this data: fixed, or calibrated from a cached Monte Carlo sample (started on demand).
@@ -706,7 +769,7 @@ async function startup() {
         if (!progress.has(key)) {
             progress.set(key, { label, fraction: 0 });
             const job = calibrateInWorker({
-                n: data.n, lambda: st.lambda, family, B: CALIBRATION_B,
+                n: data.n, lambda: st.lambda, family, share: st.anShare, B: CALIBRATION_B,
                 seed: CALIBRATION_SEED, sigmaEstimator: calibEstimator(st), x: data.x,
             }, fr => {
                 progress.get(key).fraction = fr;
@@ -747,6 +810,7 @@ async function startup() {
             if (!inFlight.has(key)) {
                 inFlight.add(key);
                 shapeThresholdInWorker({ x: base.x, y: base.y, sigma: base.sigmaUsed, lambda: state.lambda,
+                    share: state.anShare,
                     shape: FIT_SHAPES[shapeKey].shape })
                     .then(res => shapeCache.set(key, res))
                     .catch(err => shapeCache.set(key, { status: `error: ${err.message}` }))
@@ -781,7 +845,8 @@ async function startup() {
             return cached;
         if (!progress.has(key)) {
             progress.set(key, { label: 'Exact LP bounds', fraction: 0 });
-            exactBoundsInWorker({ x: base.x, y: base.y, shape: band.shape, sigma: base.sigmaUsed, tau: base.tau, lambda: state.lambda },
+            exactBoundsInWorker({ x: base.x, y: base.y, shape: band.shape, sigma: base.sigmaUsed, tau: base.tau,
+                lambda: state.lambda, share: state.anShare },
                 fr => {
                     progress.get(key).fraction = fr;
                     status.text(showProgress());
@@ -1186,7 +1251,9 @@ async function startup() {
         document.body.dataset.ready = 'false';
         const maxN = Math.max(...state.panes.map(src => SIGNALS[src].n));
         controls.sync(state, { columns: [], equallySpaced: true, n: maxN,
-            levelLabels: multiresolutionLevels(maxN, state.lambda).map(level => `|I| = ${level[0].hi - level[0].lo + 1}`) });
+            // with a shortest interval a level's sizes differ by pane, so the menu names levels by number
+            levelLabels: multiresolutionLevels(maxN, state.lambda).map((level, k) => (state.anShare > 0 ? `${k + 1}`
+                : `|I| = ${level[0].hi - level[0].lo + 1}`)) });
         buildPanes();
         // only the panes whose signal or settings changed are recomputed; the others are redrawn as they are (a
         // change to what is drawn, such as the true f, needs no refit)

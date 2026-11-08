@@ -7,7 +7,7 @@ import { exactBounds } from '../src/core/exact.js';
 import { monotoneBounds, convexBounds, smoothnessBounds, piecewiseMonotoneBounds, piecewiseConvexBounds } from '../src/core/bounds.js';
 import { regularize } from '../src/core/regularize.js';
 import { simulate } from '../src/core/signals.js';
-import { allIntervals } from '../src/core/intervals.js';
+import { allIntervals, allXIntervals, shortestSpan } from '../src/core/intervals.js';
 import { sigmaMAD } from '../src/core/sigma.js';
 import { threshold } from '../src/core/region.js';
 import { createRng } from '../src/core/rng.js';
@@ -44,6 +44,39 @@ test('exact bounds over all intervals are at least as tight as the fast bounds, 
             assert.ok(exact.lb[i] >= fb.lb[i] - TOL, `${shape.type}: lb[${i}] ${exact.lb[i]} < fast ${fb.lb[i]}`);
             assert.ok(exact.ub[i] <= fb.ub[i] + TOL, `${shape.type}: ub[${i}] ${exact.ub[i]} > fast ${fb.ub[i]}`);
         }
+    }
+});
+
+// The same with a shortest interval: the fast bounds skip windows spanning less, so they are consequences of Aₙ
+// over all intervals spanning at least the share, and the exact bounds over that family must lie inside them.
+// (The app's exact bounds use the λ family, fewer constraints, so they need not lie inside the fast bounds.)
+test('with a shortest interval the exact bounds over all intervals spanning enough lie inside the fast bounds', () => {
+    const n = 60;
+    const share = 0.1;
+    const ext = [{ type: 'max', position: 7 }, { type: 'min', position: 22 }, { type: 'max', position: 37 }, { type: 'min', position: 52 }];
+    const pmSegs = [[0, 7, 1], [7, 22, -1], [22, 37, 1], [37, 52, -1], [52, 59, 1]].map(([lo, hi, direction]) => ({ lo, hi, direction }));
+    const K = 16 * Math.PI ** 2 * 1.5;
+    const cases = [
+        ['exp5', 5, { type: 'monotone', direction: 1 }, (y, c, o) => monotoneBounds(y, c, o)],
+        ['exp5', 5, { type: 'convex' }, (y, c, o) => convexBounds(y, c, o)],
+        ['sine', 0.2, { type: 'smooth', K }, (y, c, o) => smoothnessBounds(y, c, K, 1 / n, o)],
+        ['sine', 0.2, { type: 'pwMonotone', segments: pmSegs }, (y, c, o) => piecewiseMonotoneBounds(y, c, ext, o)],
+    ];
+    for (const [signal, sigma, shape, fast] of cases) {
+        const { x, y } = simulate(signal, n, sigma, 1);
+        const intervals = allXIntervals(x, share);
+        const exact = exactBounds(highs, { x, y, shape, intervals });
+        assert.equal(exact.status, 'optimal', shape.type);
+        const c = threshold(sigmaMAD(y), 3, n);
+        const fb = fast(y, c, { x, minSpan: shortestSpan(x, share) });
+        let tighter = 0;
+        for (let i = 0; i < n; i++) {
+            assert.ok(exact.lb[i] >= fb.lb[i] - TOL, `${shape.type}: lb[${i}] ${exact.lb[i]} < fast ${fb.lb[i]}`);
+            assert.ok(exact.ub[i] <= fb.ub[i] + TOL, `${shape.type}: ub[${i}] ${exact.ub[i]} > fast ${fb.ub[i]}`);
+            if (exact.ub[i] - exact.lb[i] < fb.ub[i] - fb.lb[i] - TOL)
+                tighter++;
+        }
+        assert.ok(tighter > 0, `${shape.type}: the exact bounds are tighter somewhere`);
     }
 });
 

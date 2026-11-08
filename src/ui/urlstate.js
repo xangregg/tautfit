@@ -17,6 +17,8 @@ const MAX_COLUMN = 10000; // column index sanity cap
 const USER = 'user';
 export const VIEWS = ['single', 'gallery']; // one chart with its readouts, or several data sets at once
 export const PANE_COUNTS = [4, 6, 8]; // gallery panes, two per row
+// Aₙ's shortest interval, a share of the x range; the slider (controls.js) spans less, a link may hold up to this
+export const AN_SHARE_RANGE = [0, 0.5];
 
 const enumOf = values => ({
     write: v => String(v),
@@ -83,6 +85,7 @@ const FIELDS = {
         write: v => v,
         read: s => (/^(off|hover|all|level:\d{1,3})$/.test(s) ? s : undefined),
     },
+    anShare: num(...AN_SHARE_RANGE),
     view: enumOf(VIEWS),
     // the gallery's sources: simulated signals only (pasted data is one at a time, and a link could not carry several)
     panes: {

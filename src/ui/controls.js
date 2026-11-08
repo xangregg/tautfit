@@ -10,6 +10,10 @@ import { infoIcon, setInfo } from './info.js';
 const K_MULT_MIN = 1; // K slider range, multiples of the fast K_min
 const K_MULT_MAX = 4;
 const K_MULT_STEP = 0.05;
+const AN_SHARE_STEP = 0.01; // share of the x range on Aₙ's shortest-interval slider
+// The slider spans less than a link may hold (urlstate.js AN_SHARE_RANGE, up to 0.5), for finer steps where the
+// useful values are; a value beyond it puts the thumb at the end, and the output beside it shows the value itself.
+const AN_SHARE_MAX = 0.3; // share of the x range
 const EXACT_MAX_N = 300; // matches main.js
 const CALIBRATE_ALL_MAX_N = 2000; // matches main.js
 
@@ -58,6 +62,17 @@ const TIPS = {
         + '(Gasser, Sroka & Jennen-Steinmetz 1986), so a locally linear trend cancels.\n'
         + 'With tied x, the spread within ties is pooled in; with enough ties, both use only that spread (pure '
         + 'error).',
+    anShare: 'Every interval Aₙ checks spans at least this share of the x range (an interval spans from midway to '
+        + 'the previous x to midway to the next, so where x is sparse a lone observation can be enough). Of the '
+        + 'paper\'s blocks, those that span enough stay as they are; runs of shorter blocks are merged with each other '
+        + 'into parts about equally wide, and a run too short even then is widened over its neighbors. So Aₙ answers '
+        + 'only to features at least this wide. 0 (every interval, the paper\'s family) by default; the fast bands '
+        + 'then use only windows spanning at least this share too.\n'
+        + 'With fewer intervals a calibrated τ is smaller, so the wide intervals are tighter. In simulations of '
+        + 'lafspline (the paper\'s blocks, τ calibrated at α = 0.95, σ̂ from differences, n = 100 and 500), a 5% '
+        + 'shortest interval held f about as often as every interval did under Gaussian noise (92.8–99.3%), and more '
+        + 'often under skewed or uneven noise (16–56% at n = 500, against 0–2.5%), where single observations fall '
+        + 'outside the Gaussian tail.',
     sigmaFixed: 'Use the σ given instead of an estimate from the data, for example when the noise level is known.',
     boxes: 'Each box spans an interval of Aₙ\'s family, at the mean of y there ± c/√|I| (eq. 7). Its tick is the '
         + 'fit\'s mean over the interval, which must lie inside; a tick outside is a violated interval.\n'
@@ -248,6 +263,16 @@ export function createControls(container, state, onChange) {
     const boxes = el('select');
     boxes.addEventListener('change', () => onChange({ boxes: boxes.value }));
     const lambdaInput = numberInput('lambda', { min: 1.1, step: 0.1 });
+    // the output shows the state's value, never input.value, so a link's value beyond the slider's span is kept
+    const showShare = v => (v > 0 ? `${+(100 * v).toPrecision(3)}%` : 'all');
+    const shareInput = el('input', { type: 'range', min: '0', max: String(AN_SHARE_MAX), step: String(AN_SHARE_STEP) });
+    shareInput.value = String(state.anShare);
+    const shareOut = el('output', { text: showShare(state.anShare) });
+    shareInput.addEventListener('input', () => {
+        const v = Number(shareInput.value);
+        shareOut.textContent = showShare(v);
+        later({ anShare: v });
+    });
     const sigmaFixed = el('input', { type: 'checkbox', checked: state.sigmaFixed !== null });
     const sigmaFixedValue = el('input', {
         type: 'number', min: 0, step: 'any', value: String(state.sigmaFixed ?? 1),
@@ -337,6 +362,7 @@ export function createControls(container, state, onChange) {
         calBox,
         tauValue,
         field('λ', lambdaInput, TIPS.lambda),
+        field('shortest interval', el('div', { class: 'slider' }, [shareInput, shareOut]), TIPS.anShare),
         field('σ estimate', sigmaMethod, TIPS.sigmaMethod, sigmaNote),
         check(sigmaFixed, 'fix σ', TIPS.sigmaFixed),
         sigmaFixedValue,
