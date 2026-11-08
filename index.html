@@ -40,7 +40,20 @@
         </nav>
     </header>
     <main>
-        <aside id="controls" aria-label="Controls"></aside>
+        <aside id="controls-panel" aria-label="Controls">
+            <div class="history-bar" role="group" aria-label="Settings history">
+                <button type="button" id="settings-reset" aria-label="Reset the settings">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.6 1.8v2.8h2.8"/></svg>
+                </button>
+                <button type="button" id="settings-undo" aria-label="Undo">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3 2.5 6l3 3"/><path d="M2.5 6h7a4 4 0 0 1 0 8H7"/></svg>
+                </button>
+                <button type="button" id="settings-redo" aria-label="Redo">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 3 3 3-3 3"/><path d="M13.5 6h-7a4 4 0 0 0 0 8H9"/></svg>
+                </button>
+            </div>
+            <div id="controls"></div>
+        </aside>
         <section id="charts" aria-label="Charts">
             <div id="main-chart"></div>
             <div id="residual-view"></div>
@@ -111,6 +124,8 @@
             <li>Paste or drop CSV/TSV data, or choose a simulated signal. Hover the chart and the residual view
                 for exact values.</li>
             <li>Hover, focus or tap an ⓘ for an explanation of a control or readout; a click keeps it open.</li>
+            <li>The ↺ ↶ ↷ buttons above the settings reset them to their defaults, undo and redo (⌘Z and ⇧⌘Z, or
+                Ctrl+Z and Ctrl+Shift+Z); they leave the data as they are.</li>
             <li>The address bar always holds the current settings, so reloading keeps them and
                 <em>Copy link</em> shares them. Pasted data is included when it compresses to a short enough
                 link.</li>

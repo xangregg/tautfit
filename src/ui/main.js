@@ -25,6 +25,7 @@ import { METHODS, FIT_SHAPES, takesShape } from './methods.js';
 import { BANDS } from './bands.js';
 import { stateToHash, hashToState } from './urlstate.js';
 import { toCsv, exportColumns } from './export.js';
+import { createHistory } from './history.js';
 import {
     monotoneBounds, piecewiseMonotoneBounds, convexBounds, piecewiseConvexBounds, curvatureSegments,
     smoothnessBounds, smoothnessKMin, crossings,
@@ -79,6 +80,15 @@ const state = {
     boxes: 'hover', // Aₙ boxes on the chart: 'off' | 'hover' | 'level:k' | 'all'
 };
 const DEFAULTS = structuredClone(state); // what an empty URL hash means
+// What chooses the data (the source, pasted data and its columns, a signal's n, σ and seed): Reset, Undo and Redo
+// leave these alone and change only the other settings. The seed is data: a new seed is a new sample.
+const DATA_KEYS = new Set(['source', 'n', 'sigma', 'seed', 'userText', 'xCol', 'yCol']);
+const SETTING_KEYS = Object.keys(DEFAULTS).filter(key => !DATA_KEYS.has(key));
+
+/** The settings that Reset, Undo and Redo act on. */
+function settingsOf(st) {
+    return Object.fromEntries(SETTING_KEYS.map(key => [key, st[key]]));
+}
 
 let tableCache = { text: null, table: null };
 
@@ -893,12 +903,22 @@ async function startup() {
     }
 
     const controlsEl = document.getElementById('controls');
+    // named settingsHistory, not history: a local `history` would shadow window.history (replaceState below)
+    const settingsHistory = createHistory(settingsOf(state));
     const onChange = patch => {
         linkNote = null;
         Object.assign(state, patch);
+        if (Object.keys(patch).some(key => !DATA_KEYS.has(key))) {
+            settingsHistory.record(settingsOf(state), performance.now());
+            syncHistory();
+        }
         update();
     };
     let controls = createControls(controlsEl, state, onChange);
+    function rebuildControls() {
+        controlsEl.replaceChildren();
+        controls = createControls(controlsEl, state, onChange);
+    }
 
     // --- URL hash: written (debounced, replaceState so Back is not flooded) after every change; read on
     // load and when the user edits or follows a link to this page.
@@ -930,10 +950,62 @@ async function startup() {
         writtenHash = location.hash;
         linkNote = rejectedNote(next.rejected);
         Object.assign(state, next.state);
-        controlsEl.replaceChildren();
-        controls = createControls(controlsEl, state, onChange);
+        // a followed or edited link is one undoable step of its own
+        settingsHistory.record(settingsOf(state), performance.now(), { coalesce: false });
+        syncHistory();
+        rebuildControls();
         update();
     });
+
+    // --- settings history: Reset, Undo and Redo change the settings, never the data
+    const resetButton = document.getElementById('settings-reset');
+    const undoButton = document.getElementById('settings-undo');
+    const redoButton = document.getElementById('settings-redo');
+    const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+    const undoKeys = mac ? '⌘Z' : 'Ctrl+Z';
+    const redoKeys = mac ? '⇧⌘Z' : 'Ctrl+Shift+Z or Ctrl+Y';
+    resetButton.title = 'Reset the settings to their defaults (the data stay as they are; Undo brings them back)';
+    function syncHistory() {
+        undoButton.disabled = !settingsHistory.canUndo();
+        redoButton.disabled = !settingsHistory.canRedo();
+        resetButton.disabled = JSON.stringify(settingsOf(state)) === JSON.stringify(settingsOf(DEFAULTS));
+        undoButton.title = `Undo the last change to the settings (${undoKeys})`;
+        redoButton.title = `Redo (${redoKeys})`;
+    }
+    function applySettings(snapshot) {
+        if (!snapshot)
+            return;
+        linkNote = null;
+        Object.assign(state, snapshot);
+        syncHistory();
+        rebuildControls();
+        update();
+    }
+    resetButton.addEventListener('click', () => {
+        const defaults = settingsOf(DEFAULTS);
+        if (settingsHistory.record(defaults, performance.now(), { coalesce: false }))
+            applySettings(defaults);
+    });
+    undoButton.addEventListener('click', () => applySettings(settingsHistory.undo()));
+    redoButton.addEventListener('click', () => applySettings(settingsHistory.redo()));
+    // the keys act on the settings unless a text field has focus, which keeps its own undo
+    const typing = target => target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement
+        && !['range', 'checkbox', 'radio', 'button', 'file'].includes(target.type)) || target?.isContentEditable;
+    document.addEventListener('keydown', event => {
+        if (!(event.metaKey || event.ctrlKey) || event.altKey || typing(event.target))
+            return;
+        const key = event.key.toLowerCase();
+        const redo = (key === 'z' && event.shiftKey) || (key === 'y' && !mac && !event.shiftKey);
+        if (key === 'z' && !event.shiftKey) {
+            event.preventDefault();
+            applySettings(settingsHistory.undo());
+        }
+        else if (redo) {
+            event.preventDefault();
+            applySettings(settingsHistory.redo());
+        }
+    });
+    syncHistory();
 
     // --- toolbar
     const message = document.getElementById('toolbar-message');

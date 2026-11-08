@@ -179,13 +179,23 @@ async function main() {
             problems.push(`[timeout] --until not satisfied after ${TIMEOUT} ms: ${opts.until}`);
         await new Promise(r => setTimeout(r, SETTLE));
 
-        // Evaluate before printing so console output produced by the expression is reported too.
-        const evalResult = opts.eval ? await evaluate(opts.eval) : undefined;
+        // Evaluate before printing so console output produced by the expression is reported too. Not on a page
+        // that never got ready (a CDN module that failed to load, say): the expression would only throw there and
+        // hide the failed load that is the real cause.
+        let evalResult;
+        if (opts.eval && ready) {
+            try {
+                evalResult = await evaluate(opts.eval);
+            }
+            catch (err) {
+                problems.push(`[eval] ${err.message.split('\n')[0]}`);
+            }
+        }
         await new Promise(r => setTimeout(r, SETTLE));
         for (const line of messages)
             console.log(line);
         if (opts.eval)
-            console.log(`eval: ${JSON.stringify(evalResult)}`);
+            console.log(ready ? `eval: ${JSON.stringify(evalResult)}` : 'eval: skipped, the page did not get ready');
         if (opts.screenshot) {
             const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, pageSession);
             writeFileSync(opts.screenshot, Buffer.from(data, 'base64'));

@@ -506,7 +506,14 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         computed styles as SVG 1.1 attributes; 12 px of background around it. PNG and JPEG are the SVG drawn at 2×.
         The image uses the current color scheme; the residual view is not exported (said in the menu titles and the
         About text). The CSV is unchanged (byte-identical on sine with a band, exact bounds and an overlay).
-- [ ] Reset, Undo and Redo for the settings (§7)
+- [x] Reset, Undo and Redo for the settings (§7)
+      → `src/ui/history.js` and `test/history.test.js`, lafspline's own, copied as is (snapshots; a gesture on the
+        same settings within 1 s is one step; 200 entries). `main.js`: `DATA_KEYS` (source, n, σ, seed, pasted data
+        and its columns; the gallery's view and panes join them in §8) are never touched; a followed link and Reset
+        are steps of their own; ⌘/Ctrl+Z and ⇧⌘Z / Ctrl+Shift+Z / Ctrl+Y unless a text field has focus. Undo back to
+        a calibrated τ reuses the cached calibration (70 ms). `tools/check-page.mjs` no longer runs --eval on a page
+        that did not get ready, and reports an eval exception as a problem: a failed jsDelivr load had shown up as
+        a TypeError from ui-checks.js.
 - [ ] Gallery view (§8)
 - [ ] Aₙ's shortest interval (§9)
 - [ ] Advanced subsections (§10)
