@@ -24,7 +24,8 @@ consistent with the data, then picks the simplest of them.
 
 You can paste or drop your own CSV data or use the built-in test signals. The address bar holds the current
 settings (and small pasted data, compressed), so a link reproduces the view. Fits and bands can be exported
-as CSV, and the chart as SVG, PNG or JPEG.
+as CSV, and the chart as SVG, PNG or JPEG. A gallery view shows several simulated signals side by side with
+the same settings.
 
 ## Where this implementation differs from the paper
 

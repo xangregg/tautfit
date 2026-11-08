@@ -15,6 +15,8 @@ const MAX_DATA_CHARS = 8000; // encoded data longer than this stays out of the l
 const MAX_N = 20000; // simulated sample size cap, matches controls.js
 const MAX_COLUMN = 10000; // column index sanity cap
 const USER = 'user';
+export const VIEWS = ['single', 'gallery']; // one chart with its readouts, or several data sets at once
+export const PANE_COUNTS = [4, 6, 8]; // gallery panes, two per row
 
 const enumOf = values => ({
     write: v => String(v),
@@ -39,7 +41,9 @@ const bool = {
     read: s => (s === '1' ? true : s === '0' ? false : undefined),
 };
 
-// Every persisted state key with its codec. Ranges match the inputs in controls.js.
+// Every persisted state key with its codec. Ranges match the inputs in controls.js. The order is the link's:
+// view and panes come last (before only the pasted data), so the settings ahead of them are easier to edit by hand
+// in the URL bar; reading does not depend on the order.
 const FIELDS = {
     source: enumOf([...Object.keys(SIGNALS), USER]),
     n: int(2, MAX_N),
@@ -79,9 +83,22 @@ const FIELDS = {
         write: v => v,
         read: s => (/^(off|hover|all|level:\d{1,3})$/.test(s) ? s : undefined),
     },
+    view: enumOf(VIEWS),
+    // the gallery's sources: simulated signals only (pasted data is one at a time, and a link could not carry several)
+    panes: {
+        write: v => v.join(','),
+        read: s => {
+            const list = s.split(',');
+            return PANE_COUNTS.includes(list.length) && list.every(p => Boolean(SIGNALS[p])) ? list : undefined;
+        },
+    },
 };
 const USER_ONLY = new Set(['xCol', 'yCol']);
 const SIMULATED_ONLY = new Set(['n', 'sigma', 'seed', 'showTruth']);
+const GALLERY_ONLY = new Set(['panes']);
+// every gallery pane is a simulated signal, which uses the seed and may show its true f, whatever the single
+// view's source
+const GALLERY_SIMULATED = new Set(['seed', 'showTruth']);
 
 // n and σ default to the chosen signal's own values, so a link names them only when changed.
 function defaultFor(key, st, defaults) {
@@ -145,8 +162,11 @@ export async function unpackText(packed) {
 export async function stateToHash(st, defaults) {
     const params = new URLSearchParams();
     const isUser = st.source === USER;
+    const isGallery = st.view === 'gallery';
     for (const [key, codec] of Object.entries(FIELDS)) {
-        if ((USER_ONLY.has(key) && !isUser) || (SIMULATED_ONLY.has(key) && isUser))
+        const forGallery = isGallery && GALLERY_SIMULATED.has(key);
+        if ((USER_ONLY.has(key) && !isUser) || (SIMULATED_ONLY.has(key) && isUser && !forGallery)
+            || (GALLERY_ONLY.has(key) && !isGallery))
             continue;
         const value = st[key];
         if (value === undefined || (value === null && key !== 'sigmaFixed'))

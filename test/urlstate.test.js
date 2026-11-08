@@ -7,7 +7,7 @@ const DEFAULTS = {
     source: 'blocks', n: 1024, sigma: 1, seed: 1, showTruth: true, userText: '', xCol: null, yCol: null,
     tau: 3, lambda: 2, sigmaFixed: null, sigmaMethod: 'diff', method: 'taut', overlays: [], fixExtremes: false, fitShape: 'none',
     band: 'none', theta: 1.5, kMultiple: 2, tauMode: 'fixed', alpha: 0.95, calibFamily: 'chosen', plugSigma: true,
-    exact: false, boxes: 'hover',
+    exact: false, boxes: 'hover', view: 'single', panes: ['blocks', 'bumps', 'heavisine', 'doppler'],
 };
 
 test('defaults give an empty hash and an empty hash gives the defaults', async () => {
@@ -80,4 +80,31 @@ test('packText/unpackText round-trip Unicode; malformed data is rejected', async
     assert.equal(await unpackText(await packText(s)), s);
     const { rejected } = await hashToState('#source=user&data=!!notbase64', DEFAULTS);
     assert.deepEqual(rejected, ['data']);
+});
+
+test('the gallery: view and panes come last, panes only in the gallery, and bad pane lists are rejected', async () => {
+    const st = { ...DEFAULTS, view: 'gallery', panes: ['sine', 'box', 'line', 'ramp', 'noise', 'exp5'], band: 'monoUp',
+        seed: 7 };
+    const { hash } = await stateToHash(st, DEFAULTS);
+    assert.equal(hash, '#seed=7&band=monoUp&view=gallery&panes=sine%2Cbox%2Cline%2Cramp%2Cnoise%2Cexp5');
+    const back = await hashToState(hash, DEFAULTS);
+    assert.deepEqual(back.state, st);
+    assert.deepEqual(back.rejected, []);
+    // the panes are written only in the gallery
+    const single = await stateToHash({ ...st, view: 'single' }, DEFAULTS);
+    assert.equal(single.hash, '#seed=7&band=monoUp');
+    // default panes are left out, compared as written
+    assert.equal((await stateToHash({ ...DEFAULTS, view: 'gallery' }, DEFAULTS)).hash, '#view=gallery');
+    for (const bad of ['sine,box,line', 'sine,box,line,nosuch', 'sine,box,line,user', 'sine,box,line,ramp,noise'])
+        assert.deepEqual((await hashToState(`#view=gallery&panes=${bad}`, DEFAULTS)).rejected, ['panes'], bad);
+});
+
+test('the gallery keeps the seed and true f in a link when the single view shows pasted data', async () => {
+    const st = { ...DEFAULTS, source: 'user', userText: 'x,y\n1,2\n2,3\n', xCol: 0, yCol: 1, view: 'gallery', seed: 9,
+        showTruth: false };
+    const { hash } = await stateToHash(st, DEFAULTS);
+    assert.match(hash, /seed=9/);
+    assert.match(hash, /showTruth=0/);
+    assert.match(hash, /view=gallery.*&data=/);
+    assert.deepEqual((await hashToState(hash, DEFAULTS)).state.seed, 9);
 });

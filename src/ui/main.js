@@ -15,7 +15,7 @@ import { tautStringRegression } from '../core/tautstring.js';
 import { localExtremes, stepSigns } from '../core/extremes.js';
 import { createControls } from './controls.js';
 import { infoIcon } from './info.js';
-import { createMainChart } from './chart.js';
+import { createMainChart, drawLegend } from './chart.js';
 import { createResidualView } from './residual.js';
 import { cellEdges } from './layout.js';
 import { onThemeChange } from './theme.js';
@@ -23,7 +23,7 @@ import { regularizeInWorker, exactBoundsInWorker, calibrateInWorker, shapeThresh
 import { tauFromSample, coverageOfTau } from '../core/calibrate.js';
 import { METHODS, FIT_SHAPES, takesShape } from './methods.js';
 import { BANDS } from './bands.js';
-import { stateToHash, hashToState } from './urlstate.js';
+import { stateToHash, hashToState, PANE_COUNTS } from './urlstate.js';
 import { toCsv, exportColumns } from './export.js';
 import { createHistory } from './history.js';
 import {
@@ -33,7 +33,9 @@ import {
 
 const fmt = d3.format('.4~g');
 const fmtInt = d3.format(',');
-const CACHE_LIMIT = 48; // LP fits kept
+// LP fits kept: room for eight gallery panes with a fit, two overlays and a band's min TV(g′) each, besides the
+// single view's
+const CACHE_LIMIT = 128;
 const LP_REGION_TOL = 1e-6; // relative slack for LP solutions on the boundary of Aₙ (matches core re-check)
 const CALIBRATION_B = 2000; // Monte Carlo replicates for τ
 const CALIBRATION_SEED = 1; // fixed so a calibrated τ is reproducible
@@ -49,6 +51,10 @@ const IMAGE_SCALE = 2; // PNG and JPEG export: pixels per CSS pixel of the chart
 const JPEG_QUALITY = 0.92;
 const IMAGE_TYPES = { png: 'image/png', jpeg: 'image/jpeg' };
 const EXTENSIONS = { png: 'png', jpeg: 'jpg' };
+// the gallery's default signals, in order (fewer panes show the first ones); more panes add the other signals
+const GALLERY_SOURCES = ['blocks', 'bumps', 'heavisine', 'doppler', 'sine', 'box', 'line', 'ramp'];
+const DEFAULT_PANES = 4;
+const PANE_SUMMARY_SEP = ' · ';
 const SIGMA_HAT_TIP = 'An estimate of the noise\'s standard deviation σ from the data.';
 const EXACT_TIP = 'The 2n LPs for the smallest and largest value at each x over Aₙ ∩ the shape (§5.2.1).';
 
@@ -78,11 +84,18 @@ const state = {
     plugSigma: true, // calibrate with σ̂(Z), mimicking the estimated σ
     exact: false, // also compute exact LP bounds for the band (n ≤ EXACT_MAX_N)
     boxes: 'hover', // Aₙ boxes on the chart: 'off' | 'hover' | 'level:k' | 'all'
+    view: 'single', // 'single' (one chart with its readouts) | 'gallery' (several signals, the settings shared)
+    panes: GALLERY_SOURCES.slice(0, DEFAULT_PANES), // the gallery's signals
 };
 const DEFAULTS = structuredClone(state); // what an empty URL hash means
-// What chooses the data (the source, pasted data and its columns, a signal's n, σ and seed): Reset, Undo and Redo
-// leave these alone and change only the other settings. The seed is data: a new seed is a new sample.
-const DATA_KEYS = new Set(['source', 'n', 'sigma', 'seed', 'userText', 'xCol', 'yCol']);
+// What chooses the data (the source, pasted data and its columns, a signal's n, σ and seed, the gallery's panes)
+// and the view: Reset, Undo and Redo leave these alone and change only the other settings. The seed is data: a new
+// seed is a new sample.
+const DATA_KEYS = new Set(['view', 'panes', 'source', 'n', 'sigma', 'seed', 'userText', 'xCol', 'yCol']);
+// Settings that do not change a gallery pane's fit: what is drawn, the view and panes, the single view's data (a
+// pane is a signal at its own n and σ) and the exact LP bounds, which panes leave out.
+const NOT_PANE_KEYS = new Set(['showTruth', 'boxes', 'view', 'panes', 'source', 'n', 'sigma', 'userText', 'xCol',
+    'yCol', 'exact']);
 const SETTING_KEYS = Object.keys(DEFAULTS).filter(key => !DATA_KEYS.has(key));
 
 /** The settings that Reset, Undo and Redo act on. */
@@ -559,6 +572,8 @@ async function startup() {
     let linkNote = rejectedNote(loaded.rejected);
     const status = d3.select('#status');
     const chart = createMainChart(document.getElementById('main-chart'));
+    let panes = []; // gallery panes: {source, root, chartEl, chart, summary, select, view, key}
+    let galleryRun = 0; // a newer gallery run abandons an older one
     const residualEl = document.getElementById('residual-view');
     let hovered = null; // interval hovered in the residual view
     const residual = createResidualView(residualEl, {
@@ -570,9 +585,13 @@ async function startup() {
     });
     const readouts = document.getElementById('readouts');
     const charts = document.getElementById('charts');
+    const mainChartEl = document.getElementById('main-chart');
+    const galleryEl = document.getElementById('gallery');
 
     const lpCache = new Map(); // key → fit {key, g, lp} or {error}
-    const inFlight = new Set();
+    const fitJobs = new Map(); // key → promise of the fit, while its LP is solving
+    const inFlight = new Set(); // shape tests being solved
+    const calibJobs = new Map(); // key → promise settled when its calibration is done (or failed)
     const calibCache = new Map(); // key → sorted Monte Carlo sample
     const exactCache = new Map(); // key → exact bounds result
     const shapeCache = new Map(); // key → shapeThreshold result
@@ -581,34 +600,34 @@ async function startup() {
     let shown = null; // {primary, overlays} currently drawn
     let shownRegion = null; // regionKey of the data behind `shown`
 
-    function lpKey(methodKey, shapeKey) {
-        const extra = methodKey === 'combined' ? `|${state.fixExtremes}` : '';
-        return `${base.regionKey}|${methodKey}${extra}|${shapeKey}`;
+    function lpKey(b, st, methodKey, shapeKey) {
+        const extra = methodKey === 'combined' ? `|${st.fixExtremes}` : '';
+        return `${b.regionKey}|${methodKey}${extra}|${shapeKey}`;
     }
 
-    // Returns the fit if available; otherwise starts the LP (once) and returns null. A shape-constrained
-    // LP with no solution gives {infeasible: true}.
-    function getFit(methodKey, shapeKey = takesShape(methodKey) ? state.fitShape : 'none') {
+    // The fit of a method for base b under settings st, if available; otherwise starts the LP (once) and returns
+    // null (awaitFit waits for it). A shape-constrained LP with no solution gives {infeasible: true}. The single
+    // view and the gallery's panes share the cache.
+    function getFit(b, st, methodKey, shapeKey = takesShape(methodKey) ? st.fitShape : 'none') {
         const spec = METHODS[methodKey];
         if (methodKey === 'taut')
-            return analyze(base.tautFit ??= { key: 'taut', g: base.taut.f }, base);
+            return analyze(b.tautFit ??= { key: 'taut', g: b.taut.f }, b);
         if (methodKey === 'constant')
-            return analyze(base.constFit ??= { key: 'constant', g: new Float64Array(base.n).fill(d3.mean(base.y)) }, base);
-        const key = lpKey(methodKey, shapeKey);
+            return analyze(b.constFit ??= { key: 'constant', g: new Float64Array(b.n).fill(d3.mean(b.y)) }, b);
+        const key = lpKey(b, st, methodKey, shapeKey);
         const cached = lpCache.get(key);
         if (cached)
-            return cached.error || cached.infeasible ? cached : analyze(cached, base);
-        if (!inFlight.has(key)) {
-            inFlight.add(key);
-            const req = { x: base.x, y: base.y, sigma: base.sigmaUsed, tau: base.tau, lambda: state.lambda, ...spec.lp };
+            return cached.error || cached.infeasible ? cached : analyze(cached, b);
+        if (!fitJobs.has(key)) {
+            const req = { x: b.x, y: b.y, sigma: b.sigmaUsed, tau: b.tau, lambda: st.lambda, ...spec.lp };
             if (shapeKey !== 'none')
                 req.shape = FIT_SHAPES[shapeKey].shape;
             if (methodKey === 'combined') {
-                req.signs = stepSigns(base.taut.f, { plateaus: 'split' });
-                if (state.fixExtremes)
-                    req.fixExtremes = base.tautExt.extremes;
+                req.signs = stepSigns(b.taut.f, { plateaus: 'split' });
+                if (st.fixExtremes)
+                    req.fixExtremes = b.tautExt.extremes;
             }
-            regularizeInWorker(req)
+            const job = regularizeInWorker(req)
                 .then(result => {
                     if (result.g)
                         return { key: methodKey, shapeKey, g: result.g, lp: { ...result, fixed: Boolean(req.fixExtremes) } };
@@ -618,16 +637,28 @@ async function startup() {
                 })
                 .catch(err => ({ key: methodKey, error: String(err.message ?? err) }))
                 .then(fit => {
-                    inFlight.delete(key);
+                    fitJobs.delete(key);
                     lpCache.set(key, fit);
                     if (lpCache.size > CACHE_LIMIT)
                         lpCache.delete(lpCache.keys().next().value);
                     if (fit.error)
                         console.error(`${methodKey}: ${fit.error}`);
                     render();
+                    return fit;
                 });
+            fitJobs.set(key, job);
         }
         return null;
+    }
+
+    /** getFit, waiting for an LP that is solving (a gallery pane). */
+    async function awaitFit(b, st, methodKey, shapeKey) {
+        const shape = shapeKey ?? (takesShape(methodKey) ? st.fitShape : 'none');
+        const now = getFit(b, st, methodKey, shape);
+        if (now)
+            return now;
+        const fit = await fitJobs.get(lpKey(b, st, methodKey, shape));
+        return fit.error || fit.infeasible ? fit : analyze(fit, b);
     }
 
     function showProgress() {
@@ -636,46 +667,47 @@ async function startup() {
     }
 
     // σ̂ plug-in that matches the procedure: none when σ is fixed (known), else the chosen estimator.
-    function calibEstimator() {
-        if (state.sigmaFixed !== null || !state.plugSigma)
+    function calibEstimator(st) {
+        if (st.sigmaFixed !== null || !st.plugSigma)
             return 'none';
-        return state.sigmaMethod;
+        return st.sigmaMethod;
     }
 
-    function calibKey(data, family) {
-        const fam = family === 'all' ? 'all' : `λ${state.lambda}`;
-        const est = calibEstimator();
+    function calibKey(data, family, st) {
+        const fam = family === 'all' ? 'all' : `λ${st.lambda}`;
+        const est = calibEstimator(st);
         // GSJS and tied x (the family is over the distinct x) make the calibration specific to the data's x
         const design = est === 'gsjs' || data.ties ? `|${data.dataKey}` : '';
         return `${data.n}|${fam}|${est}${design}|${CALIBRATION_B}|${CALIBRATION_SEED}`;
     }
 
     // τ for this data: fixed, or calibrated from a cached Monte Carlo sample (started on demand).
-    function resolveTau(data) {
-        if (state.tauMode === 'fixed')
-            return { tau: state.tau, mode: 'fixed' };
-        if (state.calibFamily === 'all' && data.n > CALIBRATE_ALL_MAX_N)
+    function resolveTau(data, st) {
+        if (st.tauMode === 'fixed')
+            return { tau: st.tau, mode: 'fixed' };
+        if (st.calibFamily === 'all' && data.n > CALIBRATE_ALL_MAX_N)
             return { error: `All-interval calibration is limited to n ≤ ${CALIBRATE_ALL_MAX_N} (O(n²) per replicate).` };
-        const sorted = getCalibSample(data, state.calibFamily, 'Calibrating τ');
+        const sorted = getCalibSample(data, st.calibFamily, 'Calibrating τ', st);
         if (sorted) {
-            const t = tauFromSample(sorted, state.alpha, data.n);
+            const t = tauFromSample(sorted, st.alpha, data.n);
             return { ...t, mode: 'calibrated', cov3: coverageOfTau(sorted, 3, data.n) };
         }
         return { pending: true };
     }
 
     // Cached Monte Carlo sample of the multiscale statistic for this design and family, or null while it
-    // is being computed (started on first request; update() runs when it arrives).
-    function getCalibSample(data, family, label) {
-        const key = calibKey(data, family);
+    // is being computed (started on first request; update() runs when it arrives in the single view, and a
+    // gallery pane awaits it with awaitCalibration).
+    function getCalibSample(data, family, label, st) {
+        const key = calibKey(data, family, st);
         const sorted = calibCache.get(key);
         if (sorted)
             return sorted;
         if (!progress.has(key)) {
             progress.set(key, { label, fraction: 0 });
-            calibrateInWorker({
-                n: data.n, lambda: state.lambda, family, B: CALIBRATION_B,
-                seed: CALIBRATION_SEED, sigmaEstimator: calibEstimator(), x: data.x,
+            const job = calibrateInWorker({
+                n: data.n, lambda: st.lambda, family, B: CALIBRATION_B,
+                seed: CALIBRATION_SEED, sigmaEstimator: calibEstimator(st), x: data.x,
             }, fr => {
                 progress.get(key).fraction = fr;
                 status.text(showProgress());
@@ -686,10 +718,20 @@ async function startup() {
                 status.classed('error', true).text(`Calibration failed: ${err.message}`);
             }).finally(() => {
                 progress.delete(key);
-                update();
+                calibJobs.delete(key);
+                if (state.view !== 'gallery')
+                    update();
             });
+            calibJobs.set(key, job);
         }
         return null;
+    }
+
+    /** The calibration sample for a gallery pane, waiting for it if it is being computed; null if it failed. */
+    async function awaitCalibration(data, family, st) {
+        if (!getCalibSample(data, family, 'Calibrating τ', st))
+            await calibJobs.get(calibKey(data, family, st));
+        return calibCache.get(calibKey(data, family, st)) ?? null;
     }
 
     // The shape test for the constrained fit: smallest τ admitting the shape (one LP in the worker) and the
@@ -720,7 +762,7 @@ async function startup() {
         let cov = null;
         let covPending = false;
         if (base.n <= CALIBRATE_ALL_MAX_N) {
-            const sorted = getCalibSample(base, 'chosen', 'Coverage for the shape test');
+            const sorted = getCalibSample(base, 'chosen', 'Coverage for the shape test', state);
             if (sorted)
                 cov = coverageOfTau(sorted, r.tau, base.n);
             else
@@ -755,22 +797,22 @@ async function startup() {
     }
 
     function render() {
-        if (!base || base.error)
+        if (!base || base.error || state.view === 'gallery')
             return;
-        let primary = getFit(state.method);
+        let primary = getFit(base, state, state.method);
         let shapeFailed = false;
         if (primary?.infeasible) {
             // no function in Aₙ has the shape: show the unconstrained fit and say so
             shapeFailed = true;
-            primary = getFit(state.method, 'none');
+            primary = getFit(base, state, state.method, 'none');
         }
-        const overlays = state.overlays.filter(k => k !== state.method).map(k => getFit(k))
+        const overlays = state.overlays.filter(k => k !== state.method).map(k => getFit(base, state, k))
             .filter(f => f && !f.error && !f.infeasible);
         if (primary?.error) {
             status.classed('error', true).text(`${METHODS[state.method].name}: ${primary.error}`);
             return;
         }
-        const band = computeBand(base, state, getFit);
+        const band = computeBand(base, state, (m, sh) => getFit(base, state, m, sh));
         const bandPending = Boolean(band?.pending);
         const exact = getExact(band);
         const exactPending = Boolean(exact?.pending);
@@ -782,7 +824,7 @@ async function startup() {
                 : exactPending ? showProgress() || 'Exact LP bounds…' : '');
         if (pending && shown)
             return; // keep the previous frame, dimmed, until the solve returns
-        const drawPrimary = primary ?? getFit('taut');
+        const drawPrimary = primary ?? getFit(base, state, 'taut');
         const test = getShapeTest();
         shown = { primary: drawPrimary, overlays, band: bandPending ? null : band, exact: exactPending ? null : exact };
         draw();
@@ -790,26 +832,44 @@ async function startup() {
             test ? { test, failed: shapeFailed } : null);
     }
 
-    // Aₙ constraint boxes of the primary fit for one level, computed once per fit and level.
-    function boxesFor(fit, k) {
+    // Aₙ constraint boxes of a fit for one level of base b, computed once per fit and level.
+    function boxesFor(b, fit, k) {
         fit.boxes ??= [];
-        fit.boxes[k] ??= constraintBoxes(base.y, fit.g, base.levels[k], base.c);
+        fit.boxes[k] ??= constraintBoxes(b.y, fit.g, b.levels[k], b.c);
         return fit.boxes[k];
     }
 
-    function boxesLabel() {
-        if (state.boxes === 'off')
+    // The boxes' legend text. In the gallery the 'hover' mode draws none: there is no residual view to hover.
+    function boxesLabel(b, st, gallery = false) {
+        if (st.boxes === 'off' || (gallery && st.boxes === 'hover'))
             return null;
-        if (state.boxes === 'hover')
+        if (st.boxes === 'hover')
             return 'Aₙ boxes: hover a residual-view row';
-        if (state.boxes === 'all')
+        if (st.boxes === 'all')
             return 'Aₙ boxes, all levels';
-        const k = Number(state.boxes.split(':')[1]);
-        const size = base.levelSizes[k];
+        const k = Number(st.boxes.split(':')[1]);
+        const size = b.levelSizes[k];
         if (size === undefined)
             return null;
-        const what = base.ties ? `${size} distinct x per box` : `|I| = ${size}`;
+        const what = b.ties ? `${size} distinct x per box` : `|I| = ${size}`;
         return `Aₙ boxes, ${what}: fit mean (tick) must lie in each box`;
+    }
+
+    // The boxes to draw for a fit (BoxesSpec), or null; iv is the residual view's hovered interval (none in the
+    // gallery).
+    function boxSpecFor(b, st, fit, iv) {
+        const common = { limit: fit.limit ?? 1, fitColorVar: METHODS[fit.key].color };
+        const emphasis = k => (iv && iv.level === k ? b.levels[k].findIndex(e => e.lo === iv.lo) : -1);
+        if (st.boxes === 'off' || (st.boxes === 'hover' && !iv))
+            return null;
+        if (st.boxes === 'all') {
+            return { ...common, faint: true,
+                levels: b.levels.map((_, k) => ({ boxes: boxesFor(b, fit, k), emphasize: emphasis(k) })) };
+        }
+        const k = st.boxes === 'hover' ? iv.level : Number(st.boxes.split(':')[1]);
+        if (!b.levels[k])
+            return null;
+        return { ...common, faint: false, levels: [{ boxes: boxesFor(b, fit, k), emphasize: emphasis(k) }] };
     }
 
     function applyBoxes() {
@@ -817,52 +877,64 @@ async function startup() {
             chart.setBoxes(null);
             return;
         }
-        const fit = shown.primary;
-        const common = { limit: fit.limit ?? 1, fitColorVar: METHODS[fit.key].color };
-        const emphasis = k => (hovered && hovered.level === k
-            ? base.levels[k].findIndex(iv => iv.lo === hovered.lo) : -1);
-        if (state.boxes === 'off' || (state.boxes === 'hover' && !hovered)) {
-            chart.setBoxes(null);
-        }
-        else if (state.boxes === 'all') {
-            chart.setBoxes({ ...common, faint: true,
-                levels: base.levels.map((_, k) => ({ boxes: boxesFor(fit, k), emphasize: emphasis(k) })) });
-        }
-        else {
-            const k = state.boxes === 'hover' ? hovered.level : Number(state.boxes.split(':')[1]);
-            if (!base.levels[k]) {
-                chart.setBoxes(null);
-                return;
-            }
-            chart.setBoxes({ ...common, faint: false, levels: [{ boxes: boxesFor(fit, k), emphasize: emphasis(k) }] });
-        }
+        chart.setBoxes(boxSpecFor(base, state, shown.primary, hovered));
     }
 
-    function draw() {
-        if (!shown)
-            return;
-        const { primary, overlays, band, exact } = shown;
+    // What a chart draws for base b: the fits (primary last), the band and exact bounds.
+    function chartModel(b, st, { primary, overlays, band, exact }, gallery = false) {
         const fits = [...overlays, primary].map(fit => ({
             key: fit.key, label: fitName(fit), g: fit.g, step: METHODS[fit.key].step,
             runs: localExtremes(fit.g, METHODS[fit.key].extremesTol).runs,
             colorVar: METHODS[fit.key].color, primary: fit === primary,
         }));
-        chart.render({ x: base.x, y: base.y, f: state.showTruth ? base.f : null, fits,
-            extremes: primary.ext.extremes, edges: base.edges, band,
+        return { x: b.x, y: b.y, f: st.showTruth ? b.f : null, fits,
+            extremes: primary.ext.extremes, edges: b.edges, band,
             exact: exact?.lb ? { lb: exact.lb, ub: exact.ub, label: 'exact LP bounds' } : null,
-            boxesLabel: boxesLabel() });
+            boxesLabel: boxesLabel(b, st, gallery) };
+    }
+
+    function draw() {
+        if (state.view === 'gallery') {
+            for (const pane of panes)
+                drawPane(pane);
+            drawGalleryLegend();
+            return;
+        }
+        if (!shown)
+            return;
+        const { primary } = shown;
+        chart.render(chartModel(base, state, shown));
         applyBoxes();
         residual.render({ x: base.x, edges: base.edges, levels: base.levels, w: primary.w, ratios: primary.ratios,
             limit: primary.limit, rowLabels: base.levelSizes.map(String), rowTitle: base.ties ? '#x' : '|I|' });
     }
 
+    /** Show the single view or the gallery: the readouts, main chart and residual view, or the panes. */
+    function showView() {
+        const gallery = state.view === 'gallery';
+        document.body.classList.toggle('gallery', gallery);
+        readouts.hidden = gallery;
+        mainChartEl.hidden = gallery;
+        residualEl.hidden = gallery;
+        galleryEl.hidden = !gallery;
+        for (const button of document.querySelectorAll('#view-toggle [data-view]'))
+            button.setAttribute('aria-pressed', String(button.dataset.view === state.view));
+    }
+
     function update() {
         scheduleHash();
+        showView();
+        if (state.view === 'gallery') {
+            charts.classList.remove('pending', 'empty');
+            updateGallery();
+            return;
+        }
+        galleryRun++; // a gallery still computing stops
         let data;
         try {
             data = deriveData(state);
             if (!data.error) {
-                const tauInfo = resolveTau(data);
+                const tauInfo = resolveTau(data, state);
                 if (tauInfo.pending) {
                     controls.sync(state, { columns: data.columns, equallySpaced: data.equallySpaced, kMin: null, n: data.n });
                     charts.classList.add('pending');
@@ -918,6 +990,243 @@ async function startup() {
     function rebuildControls() {
         controlsEl.replaceChildren();
         controls = createControls(controlsEl, state, onChange);
+    }
+
+    // --- gallery: several signals with the same settings, a compact chart each and one legend.
+    const galleryLegend = document.getElementById('gallery-legend');
+    const galleryGrid = document.getElementById('gallery-grid');
+    const paneCount = document.getElementById('pane-count');
+    paneCount.replaceChildren(...PANE_COUNTS.map(k => new Option(`${k} panes`, String(k))));
+    paneCount.addEventListener('change', () => {
+        const k = Number(paneCount.value);
+        const next = state.panes.slice(0, k);
+        // more panes take the default signals not shown yet, then the others
+        for (const src of [...GALLERY_SOURCES, ...Object.keys(SIGNALS)]) {
+            if (next.length < k && !next.includes(src))
+                next.push(src);
+        }
+        onChange({ panes: next });
+    });
+    for (const button of document.querySelectorAll('#view-toggle [data-view]')) {
+        button.addEventListener('click', () => {
+            if (button.dataset.view !== state.view)
+                onChange({ view: button.dataset.view });
+        });
+    }
+
+    /** What a pane's fit depends on: its signal and the shared settings (the seed among them). */
+    function paneKey(source) {
+        return JSON.stringify([source, Object.entries(state).filter(([key]) => !NOT_PANE_KEYS.has(key))]);
+    }
+
+    /** A pane's state: the shared settings with its signal, at the signal's own n and σ. */
+    function paneState(source) {
+        return { ...state, source, n: SIGNALS[source].n, sigma: SIGNALS[source].sigma, xCol: null, yCol: null };
+    }
+
+    /**
+     * One pane's fit, as the single view would show it, waiting for its calibration and LPs: {base, primary,
+     * overlays, band, shapeFailed} or {error}. The exact LP bounds are left out (2n LPs a pane).
+     */
+    async function computePane(st) {
+        const data = deriveData(st);
+        if (data.error)
+            return { error: data.error };
+        let tauInfo = resolveTau(data, st);
+        if (tauInfo.pending) {
+            if (!await awaitCalibration(data, st.calibFamily, st))
+                return { error: 'Calibration failed.' };
+            tauInfo = resolveTau(data, st);
+        }
+        if (tauInfo.error)
+            return { error: tauInfo.error };
+        const b = deriveBase(st, data, tauInfo);
+        let primary = await awaitFit(b, st, st.method);
+        let shapeFailed = false;
+        if (primary.infeasible) {
+            shapeFailed = true;
+            primary = await awaitFit(b, st, st.method, 'none');
+        }
+        if (primary.error)
+            return { error: `${METHODS[st.method].name}: ${primary.error}` };
+        const overlays = (await Promise.all(st.overlays.filter(k => k !== st.method).map(k => awaitFit(b, st, k))))
+            .filter(f => !f.error && !f.infeasible);
+        if (st.band === 'pwConvex' && b.equallySpaced)
+            await awaitFit(b, st, 'minTV1', 'none'); // the band's own assumption
+        const band = computeBand(b, st, (m, sh) => getFit(b, st, m, sh));
+        return { base: b, primary, overlays, band: band?.pending ? null : band, exact: null, shapeFailed };
+    }
+
+    function makePane(i) {
+        const root = document.createElement('div');
+        root.className = 'pane';
+        const head = document.createElement('div');
+        head.className = 'pane-head';
+        const select = document.createElement('select');
+        select.append(...Object.entries(SIGNALS).map(([key, spec]) => new Option(spec.label, key)));
+        select.setAttribute('aria-label', `Signal in pane ${i + 1}`);
+        select.addEventListener('change', () => {
+            const next = [...state.panes];
+            next[i] = select.value;
+            onChange({ panes: next });
+        });
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'pane-open';
+        open.textContent = '↗';
+        open.title = 'Open this signal in the single view, with its readouts';
+        open.setAttribute('aria-label', `Open pane ${i + 1} in the single view`);
+        open.addEventListener('click', () => openPane(i));
+        head.append(select, open);
+        const chartEl = document.createElement('div');
+        const summary = document.createElement('p');
+        summary.className = 'pane-summary';
+        root.append(head, chartEl, summary);
+        galleryGrid.append(root);
+        return { source: null, root, chartEl, chart: createMainChart(chartEl, { compact: true }), summary, select,
+            view: null, key: null };
+    }
+
+    /** As many panes as state.panes, keeping the ones there are (and what they show). */
+    function buildPanes() {
+        while (panes.length > state.panes.length)
+            panes.pop().root.remove();
+        while (panes.length < state.panes.length)
+            panes.push(makePane(panes.length));
+        panes.forEach((pane, i) => {
+            pane.source = state.panes[i];
+            pane.select.value = pane.source;
+        });
+        paneCount.value = String(state.panes.length);
+    }
+
+    function openPane(i) {
+        const source = state.panes[i];
+        Object.assign(state, { view: 'single', source, n: SIGNALS[source].n, sigma: SIGNALS[source].sigma,
+            xCol: null, yCol: null });
+        syncHistory();
+        rebuildControls();
+        update();
+    }
+
+    /**
+     * One line under a pane: n, Aₙ's τ, the fit and its local extremes, and only where something leaves Aₙ or the
+     * band: {line, outside} (outside '' when nothing does).
+     */
+    function paneSummary(v) {
+        const { base: b, primary: fit, band, shapeFailed } = v;
+        const k = fit.ext.nMax + fit.ext.nMin;
+        const tau = b.tauInfo.mode === 'calibrated' ? `τ = ${fmt(b.tau)} (calibrated)` : `τ = ${fmt(b.tau)}`;
+        const parts = [`n = ${fmtInt(b.n)}`, tau, fitName(fit), `${fmtInt(k)} local extreme${k === 1 ? '' : 's'}`];
+        const out = [];
+        if (!fit.check.ok)
+            out.push(`fit ∉ Aₙ (${fmtInt(fit.check.violations)} intervals)`);
+        if (shapeFailed)
+            out.push(`no ${FIT_SHAPES[state.fitShape].name} fit in Aₙ`);
+        if (band?.empty)
+            out.push(`band empty at ${fmtInt(band.empty)} pts`);
+        if (band && band.inside === false)
+            out.push('true f outside the band');
+        // each phrase kept whole (no-break spaces), so a wrapped line breaks between them
+        const whole = text => text.replaceAll(' ', '\u00a0');
+        return { line: parts.join(PANE_SUMMARY_SEP), outside: out.map(whole).join(', ') };
+    }
+
+    function drawPane(pane) {
+        const v = pane.view;
+        if (!v)
+            return;
+        pane.root.classList.remove('stale');
+        pane.select.title = SIGNALS[pane.source].label;
+        pane.chartEl.hidden = Boolean(v.error);
+        pane.summary.classList.toggle('error', Boolean(v.error));
+        if (v.error) {
+            pane.summary.textContent = v.error;
+            pane.summary.title = '';
+            return;
+        }
+        pane.chart.setBoxes(null);
+        pane.chart.render(chartModel(v.base, state, v, true));
+        pane.chart.setBoxes(boxSpecFor(v.base, state, v.primary, null));
+        const { line, outside } = paneSummary(v);
+        // an excursion is never cut off: the line may wrap to show it
+        pane.summary.replaceChildren(line);
+        pane.summary.classList.toggle('outside', Boolean(outside));
+        if (outside) {
+            const warn = document.createElement('span');
+            warn.className = 'pane-outside';
+            warn.textContent = outside;
+            pane.summary.append(PANE_SUMMARY_SEP, warn);
+        }
+        // the verdict as the readouts give it, so the two never disagree
+        const fit = v.primary;
+        pane.summary.title = [line + (outside ? PANE_SUMMARY_SEP + outside : ''),
+            `${fitName(fit)} ${fit.check.ok ? '∈' : '∉'} Aₙ${verdictText(v.base, fit)}`, ...v.base.warnings,
+            ...v.base.notes].join('\n');
+    }
+
+    /** One legend for the gallery: every pane's items once, the data and true f first. */
+    function drawGalleryLegend() {
+        const items = new Map();
+        for (const pane of panes) {
+            if (!pane.view?.base || pane.chartEl.hidden)
+                continue;
+            for (const item of pane.chart.legendItems()) {
+                if (!items.has(item.label))
+                    items.set(item.label, item);
+            }
+        }
+        const first = ['data', 'true f'];
+        const rank = item => (first.includes(item.label) ? first.indexOf(item.label) : first.length);
+        drawLegend(galleryLegend, [...items.values()].sort((a, b) => rank(a) - rank(b)));
+    }
+
+    async function updateGallery() {
+        const run = ++galleryRun;
+        document.body.dataset.ready = 'false';
+        const maxN = Math.max(...state.panes.map(src => SIGNALS[src].n));
+        controls.sync(state, { columns: [], equallySpaced: true, n: maxN,
+            levelLabels: multiresolutionLevels(maxN, state.lambda).map(level => `|I| = ${level[0].hi - level[0].lo + 1}`) });
+        buildPanes();
+        // only the panes whose signal or settings changed are recomputed; the others are redrawn as they are (a
+        // change to what is drawn, such as the true f, needs no refit)
+        const todo = panes.filter(pane => pane.key !== paneKey(pane.source));
+        for (const pane of panes) {
+            if (todo.includes(pane))
+                pane.root.classList.add('stale');
+            else
+                drawPane(pane);
+        }
+        for (let i = 0; i < todo.length; i++) {
+            const pane = todo[i];
+            status.classed('error', false).text(`Gallery: computing ${SIGNALS[pane.source].label} `
+                + `(${i + 1} of ${todo.length})…`);
+            // let the page paint the panes done so far before the next
+            await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+            if (run !== galleryRun)
+                return;
+            const key = paneKey(pane.source);
+            let view;
+            try {
+                view = await computePane(paneState(pane.source));
+            }
+            catch (err) {
+                console.error(err);
+                view = { error: String(err.message ?? err) };
+            }
+            if (run !== galleryRun)
+                return;
+            pane.view = view;
+            pane.key = key;
+            drawPane(pane);
+        }
+        drawGalleryLegend();
+        const exactNote = state.exact && state.band !== 'none'
+            ? ' Exact LP bounds are left out of the panes (2n LPs each); open a pane for them.' : '';
+        const note = linkNote ? ` ${linkNote}` : '';
+        status.classed('error', Boolean(linkNote)).text(`Gallery of ${panes.length} signals, each with the settings `
+            + `on the left; hover a chart for its values, or open it (↗) for its readouts.${exactNote}${note}`);
+        document.body.dataset.ready = 'true';
     }
 
     // --- URL hash: written (debounced, replaceState so Back is not flooded) after every change; read on
@@ -1031,6 +1340,10 @@ async function startup() {
     });
     const exportMenu = document.getElementById('export-menu');
     async function exportAs(kind) {
+        if (state.view === 'gallery') {
+            say('Export works in the single view: open a pane there with ↗.');
+            return;
+        }
         if (!shown || !base || base.error || charts.classList.contains('pending')) {
             say('Nothing to export until the current fit is ready.');
             return;

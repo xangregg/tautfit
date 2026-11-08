@@ -514,7 +514,18 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         a calibrated τ reuses the cached calibration (70 ms). `tools/check-page.mjs` no longer runs --eval on a page
         that did not get ready, and reports an eval exception as a problem: a failed jsDelivr load had shown up as
         a TypeError from ui-checks.js.
-- [ ] Gallery view (§8)
+- [x] Gallery view (§8)
+      → Single | Gallery in the toolbar: 4, 6 or 8 simulated signals at once, two per row, each at its own n and σ
+        with the shared seed and settings; compact 215 px charts without axes (the tooltip has the values), one
+        legend, a one-line footer (n, τ, the fit and its extremes, and only in the violation color: the fit ∉ Aₙ,
+        no fit with the shape, an empty band, the true f outside the band; the readouts' verdict in its tooltip), ↗
+        to open a pane in the single view. `main.js`: `getFit`, `resolveTau`, `calibKey` take `(base, st)`;
+        `awaitFit` and `awaitCalibration` let a pane wait for the worker; only panes whose key changed recompute
+        (`paneKey`), in turn, a newer run abandoning an older one; `CACHE_LIMIT` 48 → 128. Panes leave out the
+        exact LP bounds (2n LPs each; the status line says so when they are on) and, in 'hover' mode, the Aₙ
+        boxes (no residual view). `urlstate.js`: `view` and `panes` last; panes only in the gallery; the seed and
+        true f written in the gallery even when the single view shows pasted data. `npm run check:ui` checks the
+        gallery and ↗.
 - [ ] Aₙ's shortest interval (§9)
 - [ ] Advanced subsections (§10)
 

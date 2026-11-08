@@ -26,6 +26,10 @@
         </div>
         <nav class="toolbar" aria-label="Page actions">
             <span id="toolbar-message" role="status"></span>
+            <div class="view-toggle" id="view-toggle" role="group" aria-label="View">
+                <button type="button" data-view="single" aria-pressed="true" title="One data set, with its readouts and residual view">Single</button>
+                <button type="button" data-view="gallery" aria-pressed="false" title="Several simulated signals at once, two per row, with the same settings">Gallery</button>
+            </div>
             <button type="button" id="copy-link" title="Copy a link to this view: data source, settings and, if small enough, your pasted data">Copy link</button>
             <details class="menu" id="export-menu">
                 <summary>Export</summary>
@@ -57,6 +61,13 @@
         <section id="charts" aria-label="Charts">
             <div id="main-chart"></div>
             <div id="residual-view"></div>
+            <div id="gallery" hidden>
+                <div class="gallery-bar">
+                    <div class="legend" id="gallery-legend"></div>
+                    <select id="pane-count" aria-label="Number of panes"></select>
+                </div>
+                <div class="gallery-grid" id="gallery-grid"></div>
+            </div>
         </section>
         <aside id="readouts" aria-label="Readouts"></aside>
     </main>
@@ -124,6 +135,9 @@
             <li>Paste or drop CSV/TSV data, or choose a simulated signal. Hover the chart and the residual view
                 for exact values.</li>
             <li>Hover, focus or tap an ⓘ for an explanation of a control or readout; a click keeps it open.</li>
+            <li><em>Gallery</em> shows several simulated signals at once with the same settings, each chosen above
+                its chart; a pane's ↗ opens it in the single view with its readouts. Panes leave out the exact LP
+                bounds, and the Aₙ boxes when they follow the residual view.</li>
             <li>The ↺ ↶ ↷ buttons above the settings reset them to their defaults, undo and redo (⌘Z and ⇧⌘Z, or
                 Ctrl+Z and Ctrl+Shift+Z); they leave the data as they are.</li>
             <li>The address bar always holds the current settings, so reloading keeps them and

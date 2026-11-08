@@ -134,5 +134,26 @@
     const srcNow = document.getElementById('source'); // controls are rebuilt when a link is followed
     srcNow.value = 'blocks';
     srcNow.dispatchEvent(new Event('change'));
+    await idle();
+
+    // 5. Gallery: every pane drawn with a footer and no error, the single view's chart and readouts hidden; ↗
+    //    opens a pane's signal in the single view at its own n, with readouts.
+    document.querySelector('#view-toggle [data-view=gallery]').click();
+    const galleryReady = await until(() => document.body.dataset.ready === 'true', 30000);
+    const paneEls = [...document.querySelectorAll('#gallery-grid .pane')];
+    const footers = paneEls.map(p => p.querySelector('.pane-summary'));
+    const galleryOk = galleryReady && paneEls.length === 4 && footers.every(f => /^n = /.test(f.textContent))
+        && !footers.some(f => f.classList.contains('error')) && document.getElementById('readouts').hidden
+        && document.getElementById('main-chart').hidden;
+    if (!galleryOk)
+        console.error(`gallery: ready ${galleryReady}, ${paneEls.length} panes, footers ${footers.map(f => f.textContent).join(' | ')}`);
+    results.push({ key: 'gallery', ok: galleryOk });
+    paneEls[2].querySelector('.pane-open').click(); // HeaviSine
+    await until(() => document.querySelector('#readouts dl') && !document.getElementById('readouts').hidden);
+    await idle();
+    const openOk = document.getElementById('source').value === 'heavisine' && readoutValue(t => t === 'n') === '1,024';
+    if (!openOk)
+        console.error(`↗ did not open HeaviSine in the single view (source ${document.getElementById('source').value})`);
+    results.push({ key: 'gallery ↗', ok: openOk });
     return results;
 })()

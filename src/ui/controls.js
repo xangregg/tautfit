@@ -184,8 +184,9 @@ export function createControls(container, state, onChange) {
     });
     const truth = el('input', { type: 'checkbox', checked: state.showTruth });
     truth.addEventListener('change', () => onChange({ showTruth: truth.checked }));
+    const sizeRow = el('div', { class: 'row' }, [field('n', nInput, TIPS.n), field('noise σ', sigmaInput, TIPS.sigma)]);
     const simBox = el('div', { class: 'group' }, [
-        el('div', { class: 'row' }, [field('n', nInput, TIPS.n), field('noise σ', sigmaInput, TIPS.sigma)]),
+        sizeRow,
         el('div', { class: 'row' }, [field('seed', seedInput, TIPS.seed), newSeed]),
         check(truth, 'show true f', TIPS.showTruth),
     ]);
@@ -315,9 +316,15 @@ export function createControls(container, state, onChange) {
     ]);
     const kBox = field('K (× K_min)', kMult, TIPS.k, kLabel);
 
+    const sourceField = field('dataset', source, TIPS.source);
+    const galleryNote = el('p', { class: 'field-note gallery-note',
+        text: 'Each pane chooses its signal above its chart, at the signal\'s own n and σ with this seed; the other '
+            + 'settings apply to every pane.' });
+
     container.append(
         heading('Data', TIPS.dataHead),
-        field('dataset', source, TIPS.source),
+        sourceField,
+        galleryNote,
         simBox,
         userBox,
         heading('Confidence region Aₙ', TIPS.regionHead),
@@ -365,8 +372,13 @@ export function createControls(container, state, onChange) {
         }
         boxes.value = [...boxes.options].some(o => o.value === st.boxes) ? st.boxes : 'hover';
         const isUser = st.source === USER;
-        simBox.hidden = isUser;
-        userBox.hidden = !isUser;
+        // the gallery's panes choose their own signals, at their own n and σ; the seed and true f apply to them all
+        const gallery = st.view === 'gallery';
+        sourceField.hidden = gallery;
+        galleryNote.hidden = !gallery;
+        sizeRow.hidden = gallery;
+        simBox.hidden = isUser && !gallery;
+        userBox.hidden = gallery || !isUser;
         const key = columns.join('\u0000');
         if (key !== lastColumns) {
             lastColumns = key;
@@ -395,7 +407,7 @@ export function createControls(container, state, onChange) {
         const calibrated = st.tauMode === 'calibrated';
         tauInput.disabled = calibrated;
         calBox.hidden = !calibrated;
-        tauValue.hidden = !calibrated;
+        tauValue.hidden = !calibrated || tau === null;
         tauValue.textContent = calibrated && tau !== null ? `calibrated τ = ${tau.toPrecision(4)}` : '';
         calFamily.options[1].disabled = n > CALIBRATE_ALL_MAX_N;
         exactBox.hidden = st.band === 'none';
