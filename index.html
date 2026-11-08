@@ -27,7 +27,15 @@
         <nav class="toolbar" aria-label="Page actions">
             <span id="toolbar-message" role="status"></span>
             <button type="button" id="copy-link" title="Copy a link to this view: data source, settings and, if small enough, your pasted data">Copy link</button>
-            <button type="button" id="download-csv" title="Data, fits and band as CSV, one row per observation">Download CSV</button>
+            <details class="menu" id="export-menu">
+                <summary>Export</summary>
+                <div class="menu-items">
+                    <button type="button" data-export="csv" title="Data, fits and band as CSV, one row per observation">Data and fits (CSV)</button>
+                    <button type="button" data-export="svg" title="The main chart as drawn, vector, with its legend (not the residual view)">Chart as SVG</button>
+                    <button type="button" data-export="png" title="The main chart as drawn, at twice the screen resolution (not the residual view)">Chart as PNG</button>
+                    <button type="button" data-export="jpeg" title="The main chart as drawn, at twice the screen resolution (not the residual view)">Chart as JPEG</button>
+                </div>
+            </details>
             <button type="button" id="about-open">About</button>
         </nav>
     </header>
@@ -106,7 +114,9 @@
             <li>The address bar always holds the current settings, so reloading keeps them and
                 <em>Copy link</em> shares them. Pasted data is included when it compresses to a short enough
                 link.</li>
-            <li><em>Download CSV</em> saves x, y, every fit shown and the band, one row per observation.</li>
+            <li><em>Export</em> saves x, y, every fit shown and the band as CSV, one row per observation, and the
+                main chart as SVG, PNG or JPEG, as drawn and in the current color scheme (the residual view is not
+                included).</li>
         </ul>
         <p class="reference">
             P. L. Davies, A. Kovac, M. Meise (2009). Nonparametric regression, confidence regions and

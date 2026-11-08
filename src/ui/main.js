@@ -44,6 +44,10 @@ const SMALL_N = 50; // below this, warn that σ̂ and τ = 3 are rough (the pape
 const INFLATION_K = 4;
 const HASH_DEBOUNCE = 250; // ms between URL hash updates while settings change
 const MESSAGE_MS = 6000; // how long toolbar messages stay up
+const IMAGE_SCALE = 2; // PNG and JPEG export: pixels per CSS pixel of the chart
+const JPEG_QUALITY = 0.92;
+const IMAGE_TYPES = { png: 'image/png', jpeg: 'image/jpeg' };
+const EXTENSIONS = { png: 'png', jpeg: 'jpg' };
 const SIGMA_HAT_TIP = 'An estimate of the noise\'s standard deviation σ from the data.';
 const EXACT_TIP = 'The 2n LPs for the smallest and largest value at each x over Aₙ ∩ the shape (§5.2.1).';
 
@@ -953,12 +957,34 @@ async function startup() {
             say(`Copy the address bar to share this view${omitted}.`);
         }
     });
-    const downloadButton = document.getElementById('download-csv');
-    downloadButton.addEventListener('click', () => {
+    const exportMenu = document.getElementById('export-menu');
+    async function exportAs(kind) {
         if (!shown || !base || base.error || charts.classList.contains('pending')) {
             say('Nothing to export until the current fit is ready.');
             return;
         }
+        const name = `tautfit-${state.source}-${state.method}`;
+        if (kind === 'csv') {
+            exportCsv(`${name}.csv`);
+            return;
+        }
+        const svg = chart.toSvg({ title: SIGNALS[state.source]?.label ?? 'Your data' });
+        if (kind === 'svg') {
+            download(new Blob([svg.text], { type: 'image/svg+xml' }), `${name}.svg`);
+            say(`Saved ${name}.svg.`);
+            return;
+        }
+        try {
+            const image = await rasterize(svg, IMAGE_TYPES[kind], IMAGE_SCALE);
+            const file = `${name}.${EXTENSIONS[kind]}`;
+            download(image.blob, file);
+            say(`Saved ${file} (${image.width} × ${image.height} px).`);
+        }
+        catch (err) {
+            say(`Could not make the image: ${err.message}`);
+        }
+    }
+    function exportCsv(file) {
         const { primary, overlays, band, exact } = shown;
         const names = state.source === 'user'
             ? { x: state.xCol < 0 ? 'row' : base.columns[state.xCol], y: base.columns[state.yCol] } : {};
@@ -969,13 +995,25 @@ async function startup() {
             band: band ? { key: state.band, lb: band.lb, ub: band.ub } : null,
             exact: exact?.lb ? exact : null,
         }));
-        const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `tautfit-${state.source}-${state.method}.csv`;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 0);
-        say(`Saved ${a.download} (${fmtInt(base.n)} rows).`);
+        download(new Blob([csv], { type: 'text/csv' }), file);
+        say(`Saved ${file} (${fmtInt(base.n)} rows).`);
+    }
+    exportMenu.addEventListener('click', event => {
+        const item = event.target.closest('[data-export]');
+        if (!item)
+            return;
+        exportMenu.open = false;
+        exportAs(item.dataset.export);
+    });
+    document.addEventListener('click', event => {
+        if (exportMenu.open && !exportMenu.contains(event.target))
+            exportMenu.open = false;
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && exportMenu.open) {
+            exportMenu.open = false;
+            exportMenu.querySelector('summary').focus();
+        }
     });
     const about = document.getElementById('about');
     document.getElementById('about-open').addEventListener('click', () => about.showModal());
@@ -983,6 +1021,36 @@ async function startup() {
     new ResizeObserver(() => draw()).observe(charts);
     onThemeChange(draw);
     update();
+}
+
+function download(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/** An SVG document drawn into a canvas at scale × its size, as a PNG or JPEG blob. */
+async function rasterize(svg, type, scale) {
+    const url = URL.createObjectURL(new Blob([svg.text], { type: 'image/svg+xml' }));
+    try {
+        const img = new Image();
+        img.src = url;
+        await img.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(svg.width * scale);
+        canvas.height = Math.round(svg.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, type, JPEG_QUALITY));
+        if (!blob)
+            throw new Error('the browser could not encode the image');
+        return { blob, width: canvas.width, height: canvas.height };
+    }
+    finally {
+        URL.revokeObjectURL(url);
+    }
 }
 
 function rejectedNote(rejected) {

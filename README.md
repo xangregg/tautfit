@@ -23,8 +23,8 @@ consistent with the data, then picks the simplest of them.
 - **Calibration.** τ = 3 by default, or calibrated by Monte Carlo for the actual n and interval family.
 
 You can paste or drop your own CSV data or use the built-in test signals. The address bar holds the current
-settings (and small pasted data, compressed), so a link reproduces the view. Fits and bands can be downloaded
-as CSV.
+settings (and small pasted data, compressed), so a link reproduces the view. Fits and bands can be exported
+as CSV, and the chart as SVG, PNG or JPEG.
 
 ## Where this implementation differs from the paper
 

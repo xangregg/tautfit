@@ -342,7 +342,8 @@ only to within solver tolerance: the first solve found it feasible and a later b
 - Recompute in workers; keep the UI responsive; debounce sliders.
 - Keep state in the URL hash for shareable links (dataset, seed, settings), not localStorage. *(M7: `urlstate.js`;
   small pasted data travels in the link, compressed.)*
-- **Toolbar (M7):** Copy link, Download CSV (`export.js`, what is on screen), About dialog.
+- **Toolbar (M7):** Copy link, Download CSV (`export.js`, what is on screen), About dialog. *(After M7:* an Export
+  menu in place of Download CSV: the same CSV, and the main chart as SVG, PNG or JPEG.)*
 - **ⓘ tips (after M7):** explanations sit behind a small ⓘ after a label, shown on hover, focus or tap and pinned
   by a click (`info.js`, lafspline's own module, copied as is; a line per paragraph, `- ` lines as a list, `**…**`
   bold, built from text nodes). Visible: labels, inputs, values, warnings, the verdict, and the reasons a control
@@ -499,7 +500,12 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         one ⓘ (`appendRows`); "c = σ√(τ log n)" became "threshold c" and "|𝓘ₙ|" "intervals". Fixed on the way: a
         global `[hidden]` rule, since `.field` and `.check` set `display` and so overrode `hidden` (the K slider and
         "pin extremes" showed whatever the band and method); `npm run check:ui` checks it.
-- [ ] Export menu: CSV, SVG, PNG, JPEG (§6)
+- [x] Export menu: CSV, SVG, PNG, JPEG (§6)
+      → `chart.js` `toSvg`, ported from lafspline: the legend laid out and wrapped as on the page, points and Aₙ
+        boxes as vector shapes (`boxShapes` feeds both the canvas and the SVG), the SVG layers cloned with their
+        computed styles as SVG 1.1 attributes; 12 px of background around it. PNG and JPEG are the SVG drawn at 2×.
+        The image uses the current color scheme; the residual view is not exported (said in the menu titles and the
+        About text). The CSV is unchanged (byte-identical on sine with a band, exact bounds and an overlay).
 - [ ] Reset, Undo and Redo for the settings (§7)
 - [ ] Gallery view (§8)
 - [ ] Aₙ's shortest interval (§9)
