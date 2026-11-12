@@ -155,5 +155,18 @@
     if (!openOk)
         console.error(`↗ did not open HeaviSine in the single view (source ${document.getElementById('source').value})`);
     results.push({ key: 'gallery ↗', ok: openOk });
+
+    // 6. A chart narrower than its margins draws no rect of negative width (an SVG error in the console).
+    //    (Regression: while the app's browser pane opened, the plot's clip and hover rects got width −52.)
+    const chartsEl = document.getElementById('charts');
+    chartsEl.style.width = '40px';
+    await wait(300); // the ResizeObserver redraws
+    const negative = [...document.querySelectorAll('#charts rect')]
+        .filter(r => parseFloat(r.getAttribute('width')) < 0).length;
+    chartsEl.style.width = '';
+    await wait(300);
+    if (negative)
+        console.error(`${negative} rect(s) with a negative width in a chart narrower than its margins`);
+    results.push({ key: 'narrow charts', ok: negative === 0 });
     return results;
 })()

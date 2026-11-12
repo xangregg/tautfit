@@ -83,8 +83,9 @@ export function createResidualView(container, { onHover }) {
 
         plot.style('height', `${height}px`);
         svg.attr('width', width).attr('height', height);
+        // a view narrower than its margins (for a moment while a pane opens) has no plot area, not a negative one
         overlay.attr('x', MARGIN.left).attr('y', MARGIN.top)
-            .attr('width', width - MARGIN.left - MARGIN.right).attr('height', rows * ROW_H);
+            .attr('width', Math.max(0, width - MARGIN.left - MARGIN.right)).attr('height', rows * ROW_H);
         gAxisX.attr('transform', `translate(0,${MARGIN.top + rows * ROW_H})`)
             .call(d3.axisBottom(sx).ticks(width / 90).tickSizeOuter(0));
         // Row labels: size of the row's first cell (exact for λ = 2 except a short last cell), in
