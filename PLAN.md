@@ -558,6 +558,13 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         plug-in in the τ note; θ in the band's rows). The open state is not a setting (not in the link, not
         undoable).
 
+- [x] The data source as a segmented Simulated · File · Text control (from lafspline 96a224a)
+      → Simulated is the signal menu (no "Your data" item), File an Open… button with the file's name, Text the
+        text box, the last two with the column pickers. The whole area takes a dropped file or text clipping (cells
+        copied from a spreadsheet are tab-separated); a workbook (.xlsx, .xls, .ods, .numbers) gets a note and the
+        data stay. File and Text are both source 'user', so links and history are unchanged; choosing either with no
+        data keeps the chart, and the segment and the file's name survive a rebuild of the controls (module-level
+        in controls.js).
 ### M8 — Moved to a separate project: "least ambitious fit" on top of Aₙ
 Ladder of simplicity checked by tiny LPs inside Aₙ: constant feasible? → linear (a + b·x) feasible? →
 minTV(1) linear spline with fewest kinks (ramps with flat ends arise naturally), then optionally smooth the

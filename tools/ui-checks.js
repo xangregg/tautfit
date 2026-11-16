@@ -65,9 +65,8 @@
     const connectors = () => [...document.querySelectorAll('#main-chart .gap-connector')].filter(p => p.getAttribute('d'));
     if (connectors().length !== 0)
         console.error('gap connectors drawn for equally spaced data');
-    const src = document.getElementById('source');
-    src.value = 'user';
-    src.dispatchEvent(new Event('change'));
+    const segment = mode => document.querySelector(`#controls .segmented [data-mode=${mode}]`);
+    segment('text').click(); // typing in Text then makes the data the user's
     await wait(50);
     const ta = document.querySelector('#controls textarea');
     ta.value = 'x,y\n1,1\n2,2\n4,4\n6,5\n7,5.6\n8,6\n9,6.2\n10,6.5\n20,8\n21,7\n';
@@ -131,7 +130,8 @@
     results.push({ key: 'shape test', ok: shapeOk });
     setSelect(findSelect('decreasing'), 'none');
     setSelect(findSelect('minTV2'), 'taut');
-    const srcNow = document.getElementById('source'); // controls are rebuilt when a link is followed
+    document.querySelector('#controls .segmented [data-mode=example]').click(); // controls rebuilt by the link
+    const srcNow = document.getElementById('source');
     srcNow.value = 'blocks';
     srcNow.dispatchEvent(new Event('change'));
     await idle();
