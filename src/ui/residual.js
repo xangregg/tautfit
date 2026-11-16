@@ -4,6 +4,9 @@
 // shortest interval, a run of short blocks too short even when merged is widened over its neighbors
 // (intervals.js, flagged `widened`) and overlaps them: such an interval is drawn in the lower half of its row, over
 // its whole span, so it never hides the cells it overlaps.
+//
+// The view shares the main chart's x axis, zoomed or not (setXDomain): only its columns pan and zoom, never its rows,
+// so every level stays drawn at full height and each cell keeps its color.
 
 import * as d3 from 'd3';
 import { MARGIN, xScale, cellIndex, sizeCanvas } from './layout.js';
@@ -43,7 +46,7 @@ function ratioColor(colors) {
 /**
  * @param {HTMLElement} container
  * @param {{onHover: function({lo: number, hi: number}|null): void}} handlers
- * @returns {{render: function(ResidualModel): void}}
+ * @returns {{render: function(ResidualModel): void, setXDomain: function([number, number]|null): void}}
  */
 export function createResidualView(container, { onHover }) {
     container.classList.add('chart');
@@ -54,11 +57,15 @@ export function createResidualView(container, { onHover }) {
     const gAxisX = svg.append('g').attr('class', 'axis');
     const gAxisY = svg.append('g').attr('class', 'axis');
     const yTitle = svg.append('text').attr('class', 'axis-title').text('|I|');
-    const hover = svg.append('rect').attr('class', 'cell-hover').attr('visibility', 'hidden');
+    const clipId = `residual-clip-${Math.random().toString(36).slice(2)}`;
+    const clipRect = svg.append('clipPath').attr('id', clipId).append('rect');
+    const hover = svg.append('rect').attr('class', 'cell-hover').attr('visibility', 'hidden')
+        .attr('clip-path', `url(#${clipId})`);
     const overlay = svg.append('rect').attr('class', 'overlay');
 
     let model = null;
     let sx = null;
+    let xDomain = null; // the main chart's zoomed x domain; null: all cells
 
     function rowTop(k) {
         return MARGIN.top + k * ROW_H;
@@ -80,12 +87,16 @@ export function createResidualView(container, { onHover }) {
         const color = ratioColor(colors);
         const limit = m.limit ?? 1;
         sx = xScale(m.edges, width);
+        if (xDomain)
+            sx.domain(xDomain);
+        const [left, right] = sx.range();
 
         plot.style('height', `${height}px`);
         svg.attr('width', width).attr('height', height);
         // a view narrower than its margins (for a moment while a pane opens) has no plot area, not a negative one
-        overlay.attr('x', MARGIN.left).attr('y', MARGIN.top)
-            .attr('width', Math.max(0, width - MARGIN.left - MARGIN.right)).attr('height', rows * ROW_H);
+        const plotWidth = Math.max(0, width - MARGIN.left - MARGIN.right);
+        overlay.attr('x', MARGIN.left).attr('y', MARGIN.top).attr('width', plotWidth).attr('height', rows * ROW_H);
+        clipRect.attr('x', MARGIN.left).attr('y', MARGIN.top).attr('width', plotWidth).attr('height', rows * ROW_H);
         gAxisX.attr('transform', `translate(0,${MARGIN.top + rows * ROW_H})`)
             .call(d3.axisBottom(sx).ticks(width / 90).tickSizeOuter(0));
         // Row labels: size of the row's first cell (exact for λ = 2 except a short last cell), in
@@ -100,6 +111,12 @@ export function createResidualView(container, { onHover }) {
 
         const ctx = sizeCanvas(canvas, width, height);
         ctx.clearRect(0, 0, width, height);
+        // zoomed, cells reach past the plot: clip them at its edges, and skip those wholly outside
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(MARGIN.left, MARGIN.top, plotWidth, rows * ROW_H);
+        ctx.clip();
+        const outside = (x0, x1) => x1 < left || x0 > right;
         // First pass: every cell in its ratio color (widened ones after the rest, in the lower half). Second pass:
         // violations, at least 1 px wide, so a violating interval narrower than a pixel is never blended away.
         for (const widened of [false, true]) {
@@ -111,6 +128,8 @@ export function createResidualView(container, { onHover }) {
                         continue;
                     const x0 = sx(m.edges[level[j].lo]);
                     const x1 = sx(m.edges[level[j].hi + 1]);
+                    if (outside(x0, x1))
+                        continue;
                     const [y0, h] = cellRows(k, level[j]);
                     ctx.fillStyle = ratios[j] > limit ? colors.violation : color(ratios[j]);
                     ctx.fillRect(x0, y0, x1 - x0, h);
@@ -126,10 +145,13 @@ export function createResidualView(container, { onHover }) {
                     continue;
                 const x0 = sx(m.edges[level[j].lo]);
                 const x1 = sx(m.edges[level[j].hi + 1]);
+                if (outside(x0, x1))
+                    continue;
                 const [y0, h] = cellRows(k, level[j]);
                 ctx.fillRect(x0, y0, Math.max(1, x1 - x0), h);
             }
         }
+        ctx.restore();
 
         renderLegend(colors, color);
     }
@@ -152,7 +174,11 @@ export function createResidualView(container, { onHover }) {
         const k = Math.floor((py - MARGIN.top) / ROW_H);
         if (k < 0 || k >= model.levels.length)
             return null;
-        const i = cellIndex(model.edges, sx.invert(px));
+        const xv = sx.invert(px);
+        // zoomed out, the plot reaches past the data: no cell there
+        if (xv < model.edges[0] || xv > model.edges[model.edges.length - 1])
+            return null;
+        const i = cellIndex(model.edges, xv);
         const level = model.levels[k];
         if (!level.some(iv => iv.widened))
             return { k, j: byLo.right(level, i) - 1 };
@@ -167,8 +193,12 @@ export function createResidualView(container, { onHover }) {
         if (!model)
             return;
         const hit = locate(event);
-        if (!hit)
+        if (!hit) {
+            hover.attr('visibility', 'hidden');
+            hideTooltip();
+            onHover(null);
             return;
+        }
         const { k, j } = hit;
         const iv = model.levels[k][j];
         const ratio = model.ratios[k][j];
@@ -199,5 +229,16 @@ export function createResidualView(container, { onHover }) {
         onHover(null);
     });
 
-    return { render };
+    /**
+     * Follow the main chart's x axis.
+     *
+     * @param {[number, number]|null} domain  the zoomed x domain, data units; null: all cells
+     */
+    function setXDomain(domain) {
+        xDomain = domain;
+        if (model)
+            render(model);
+    }
+
+    return { render, setXDomain };
 }

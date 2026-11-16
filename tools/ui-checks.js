@@ -168,5 +168,62 @@
     if (negative)
         console.error(`${negative} rect(s) with a negative width in a chart narrower than its margins`);
     results.push({ key: 'narrow charts', ok: negative === 0 });
+
+    // 7. Pan and zoom. A zoomed y axis survives a change of a fit setting (regression, from lafspline: simulated data
+    //    are rebuilt on every change, and the chart took the new arrays for new data and reset the view), and leaves
+    //    the residual view as it was. A zoomed x axis is shared by the residual view, whose x ticks match the chart's.
+    const chartSvg = () => document.querySelector('#main-chart .plot > svg');
+    const axes = () => [...chartSvg().querySelectorAll(':scope > .axis')].map(a => a.textContent);
+    const residualTicks = () => document.querySelector('#residual-view .axis').textContent;
+    const residualPixels = () => {
+        const cv = document.querySelector('#residual-view canvas');
+        return cv.toDataURL();
+    };
+    const wheel = (cls, deltaY) => {
+        const hitEl = chartSvg().querySelector(`.axis-hit.${cls}`);
+        const r = hitEl.getBoundingClientRect();
+        hitEl.dispatchEvent(new WheelEvent('wheel', { deltaY, clientX: r.x + r.width / 3, clientY: r.y + r.height / 2,
+            bubbles: true, cancelable: true }));
+    };
+    const fullAxes = axes();
+    const residualBefore = residualPixels();
+    wheel('y', -300);
+    await wait(200);
+    const yZoomed = axes()[1];
+    const residualSame = residualPixels() === residualBefore;
+    const slider = [...document.querySelectorAll('#controls input[type=range]')].filter(e => e.getClientRects().length)
+        .at(-1);
+    const sliderBefore = slider.value;
+    slider.value = String(Number(slider.value) + 3 * Number(slider.step || 0.01));
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
+    await wait(100);
+    await idle();
+    await wait(200);
+    const kept = yZoomed !== fullAxes[1] && axes()[1] === yZoomed;
+    if (!kept)
+        console.error(`the zoomed view was not kept across a settings change (${fullAxes[1]} → ${yZoomed} → ${axes()[1]})`);
+    if (!residualSame)
+        console.error('zooming the chart\'s y axis redrew the residual view differently');
+    results.push({ key: 'zoom kept', ok: kept && residualSame });
+    slider.value = sliderBefore;
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
+    await wait(100);
+    await idle();
+    wheel('x', -300);
+    await wait(200);
+    const xZoomed = axes()[0];
+    const follows = xZoomed !== fullAxes[0] && residualTicks() === xZoomed;
+    if (!follows)
+        console.error(`the residual view did not follow the chart's x zoom (chart ${xZoomed}, residual ${residualTicks()})`);
+    results.push({ key: 'residual follows x', ok: follows });
+    document.querySelector('#main-chart .reset-view').click();
+    await wait(200);
+    const reset = axes()[0] === fullAxes[0] && axes()[1] === fullAxes[1] && residualTicks() === fullAxes[0]
+        && document.querySelector('#main-chart .reset-view').hidden;
+    if (!reset)
+        console.error('Reset axes did not restore the full view');
+    results.push({ key: 'reset axes', ok: reset });
     return results;
 })()

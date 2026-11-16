@@ -625,7 +625,9 @@ async function startup() {
     Object.assign(state, loaded.state);
     let linkNote = rejectedNote(loaded.rejected);
     const status = d3.select('#status');
-    const chart = createMainChart(document.getElementById('main-chart'));
+    // the residual view shares the chart's x axis, so it follows the chart's pan and zoom
+    const chart = createMainChart(document.getElementById('main-chart'), { interactive: true,
+        onView: domain => residual.setXDomain(domain) });
     let panes = []; // gallery panes: {source, root, chartEl, chart, summary, select, view, key}
     let galleryRun = 0; // a newer gallery run abandons an older one
     const residualEl = document.getElementById('residual-view');

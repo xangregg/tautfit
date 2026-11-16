@@ -565,6 +565,16 @@ Each milestone ends with: tests passing, page loads with no console errors, shor
         data stay. File and Text are both source 'user', so links and history are unchanged; choosing either with no
         data keeps the chart, and the segment and the file's name survive a rebuild of the controls (module-level
         in controls.js).
+- [x] Pan, zoom and resize the main chart (from lafspline 5476d30)
+      → Drag pans (on an axis, that axis alone), scroll over an axis zooms it, pinch or ctrl/⌘-wheel over the plot
+        zooms both (a plain wheel still scrolls the page), shift-drag zooms to a box, double-click or Reset axes
+        resets; a grip below the plot sets its height (localStorage). Display only; kept across settings changes
+        (x and y compared by value, since simulated data are rebuilt on every change), reset for new data. Points,
+        marks, crosshair and highlight are clipped to the plot, also in the SVG export. *tautfit-specific:* the
+        residual view shares the chart's x axis (`onView` → `residual.setXDomain`), so it pans and zooms with x
+        only: its rows keep their height whatever the chart's y zoom or height, cells are clipped at the plot edges,
+        and hovering past the data shows no cell. Regression checks in tools/ui-checks.js (§7).
+
 ### M8 — Moved to a separate project: "least ambitious fit" on top of Aₙ
 Ladder of simplicity checked by tiny LPs inside Aₙ: constant feasible? → linear (a + b·x) feasible? →
 minTV(1) linear spline with fewest kinks (ramps with flat ends arise naturally), then optionally smooth the
